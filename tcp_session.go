@@ -487,13 +487,8 @@ sendLoop:
 			continue
 		}
 
-		// 写入包大小
-		if err = s.writePacketSize(p); err != nil {
-			break sendLoop
-		}
-
-		// 写入包体
-		if err = s.writePacketBody(p); err != nil {
+		// 写入数据包
+		if err = s.writePacket(p); err != nil {
 			break sendLoop
 		}
 
@@ -537,47 +532,42 @@ func (s *TCPSession) popPacket(wait bool) (p *Packet) {
 	return
 }
 
-// writePacketSize 写入包体大小至缓冲区
-func (s *TCPSession) writePacketSize(p *Packet) error {
+// writePacket 将数据包写入缓冲区
+func (s *TCPSession) writePacket(p *Packet) error {
 	var err error
+
+	// 写大小
 	for s.sendBuf.Writable() < tcpPacketSizeLen {
 		if err = s.sendBuffered(false); err != nil {
-			err = errors.WithMessage(err, "gnet.TCPSession: write packet size: send data buffered")
-			break
+			return errors.WithMessage(err, "gnet.TCPSession: write packet size: send data buffered")
 		}
 	}
-
 	err = s.sendBuf.WriteUint32(uint32(p.Readable()))
 	if err != nil {
 		// 将包大小写入缓存失败
-		err = errors.WithMessage(err, "gnet.TCPSession: write packet size to buffer")
+		return errors.WithMessage(err, "gnet.TCPSession: write packet size to buffer")
 	}
-	return err
-}
 
-// writePacketBody 写入包子至缓冲区
-func (s *TCPSession) writePacketBody(p *Packet) error {
+	// 写包体
 	var n int
 	var w int
-	var err error
 	data := p.UnreadData()
 	for n < len(data) {
 		w, err = s.sendBuf.Write(data[n:])
 		if err != nil && err != buffer.ErrBufferFull {
 			// 将包数据写入缓存失败
-			err = errors.WithMessage(err, "gnet.TCPSession: write packet data to buffer")
-			break
+			return errors.WithMessage(err, "gnet.TCPSession: write packet data to buffer")
 		}
 		n += w
 
 		if s.sendBuf.Writable() < tcpPacketSizeLen {
 			if err = s.sendBuffered(false); err != nil {
-				err = errors.WithMessage(err, "gnet.TCPSession: send data buffered")
-				break
+				return errors.WithMessage(err, "gnet.TCPSession: send data buffered")
 			}
 		}
 	}
-	return err
+
+	return nil
 }
 
 // sendBuffered 发送缓存在发送缓冲区中的数据
