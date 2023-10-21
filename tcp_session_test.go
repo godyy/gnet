@@ -32,6 +32,7 @@ func TestTCP(t *testing.T) {
 		//SetReceiveTimeout(10 * time.Second).
 		SetMaxPacketSize(128).
 		SetSendBufferSize(5).
+		SetSendBufferMaxSize(50).
 		SetReceiveBufferSize(5)
 	addr := "localhost:9999"
 

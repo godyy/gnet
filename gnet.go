@@ -3,7 +3,6 @@ package gnet
 import (
 	"errors"
 	"net"
-	"time"
 )
 
 // ErrSessionNotStarted 会话未启动
@@ -42,7 +41,7 @@ type Session interface {
 	Handler() SessionHandler
 
 	// SendPacket 发送数据包
-	SendPacket(*Packet, ...time.Duration) error
+	SendPacket(*Packet) error
 
 	// Close 关闭
 	Close(error) error

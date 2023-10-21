@@ -11,8 +11,9 @@ import (
 	"unsafe"
 
 	"github.com/godyy/gutils/buffer"
+
 	"github.com/godyy/gutils/buffer/bytes"
-	"github.com/pkg/errors"
+	pkg_errors "github.com/pkg/errors"
 )
 
 const (
@@ -27,9 +28,6 @@ const (
 
 	// tcp会话默认发送缓冲区大小
 	tcpDefaultSendBufferSize = 4096
-
-	// tcp会话默认发送队列大小
-	tcpDefaultSendQueueSize = 100
 )
 
 // TCPSessionOption TCP会话选项
@@ -56,17 +54,10 @@ type TCPSessionOption struct {
 	// default 4096.
 	sendBufferSize int
 
-	// sendQueueSize 发送队列大小
-	// default 100.
-	sendQueueSize int
-
 	// maxPacketSize 最大消息包大小
 	// 接收到超过此上限的消息包，会默认连接非法.
 	// 理论上限为 MaxUint32，default 4092 = 4096 - 4.
 	maxPacketSize int
-
-	receiveBufferPool *sync.Pool
-	sendBufferPool    *sync.Pool
 }
 
 // NewTCPSessionOption 创建默认TCP会话选项
@@ -76,7 +67,6 @@ func NewTCPSessionOption() *TCPSessionOption {
 		sendTimeout:       0,
 		receiveBufferSize: tcpDefaultReceiveBufferSize,
 		sendBufferSize:    tcpDefaultSendBufferSize,
-		sendQueueSize:     tcpDefaultSendQueueSize,
 		maxPacketSize:     tcpDefaultReceiveBufferSize - tcpPacketSizeLen,
 	}
 }
@@ -86,10 +76,6 @@ func NewTCPSessionOption() *TCPSessionOption {
 func (o *TCPSessionOption) acquire() *TCPSessionOption {
 	o.locker.Lock()
 	defer o.locker.Unlock()
-	if o.refCount == 0 {
-		o.receiveBufferPool = &sync.Pool{New: func() interface{} { return bytes.NewFixedBuffer(o.receiveBufferSize) }}
-		o.sendBufferPool = &sync.Pool{New: func() interface{} { return bytes.NewFixedBuffer(o.sendBufferSize) }}
-	}
 	o.refCount++
 	return o
 }
@@ -101,10 +87,6 @@ func (o *TCPSessionOption) release() {
 	defer o.locker.Unlock()
 	if o.refCount > 0 {
 		o.refCount--
-		if o.refCount == 0 {
-			o.receiveBufferPool = nil
-			o.sendBufferPool = nil
-		}
 	}
 }
 
@@ -126,7 +108,6 @@ func (o *TCPSessionOption) unlock() {
 }
 
 // SetReceiveTimeout 设置接收超时
-// default zero, mean no limit.
 func (o *TCPSessionOption) SetReceiveTimeout(timeout time.Duration) *TCPSessionOption {
 	if timeout < 0 {
 		panic("gnet.TCPSessionOption.SetReceiveTimeout: timeout < 0")
@@ -142,7 +123,6 @@ func (o *TCPSessionOption) SetReceiveTimeout(timeout time.Duration) *TCPSessionO
 }
 
 // SetSendTimeout 设置发送超时
-// default zero, mean no limit.
 func (o *TCPSessionOption) SetSendTimeout(timeout time.Duration) *TCPSessionOption {
 	if timeout < 0 {
 		panic("gnet.TCPSessionOption.SetSendTimeout: timeout < 0")
@@ -158,7 +138,6 @@ func (o *TCPSessionOption) SetSendTimeout(timeout time.Duration) *TCPSessionOpti
 }
 
 // SetReceiveBufferSize 设置接收缓冲区大小
-// default 4096.
 func (o *TCPSessionOption) SetReceiveBufferSize(s int) *TCPSessionOption {
 	if s <= 0 {
 		panic("gnet.TCPSessionOption.SetReceiveBufferSize: size <= 0")
@@ -174,7 +153,6 @@ func (o *TCPSessionOption) SetReceiveBufferSize(s int) *TCPSessionOption {
 }
 
 // SetSendBufferSize 设置发送缓冲区大小
-// default 4096.
 func (o *TCPSessionOption) SetSendBufferSize(s int) *TCPSessionOption {
 	if s <= 0 {
 		panic("gnet.TCPSessionOption.SetSendBufferSize: size <= 0")
@@ -189,25 +167,8 @@ func (o *TCPSessionOption) SetSendBufferSize(s int) *TCPSessionOption {
 	return o
 }
 
-// SetSendQueueSize 设置发送队列大小
-// default 100.
-func (o *TCPSessionOption) SetSendQueueSize(s int) *TCPSessionOption {
-	if s <= 0 {
-		panic("gnet.TCPSessionOption.SetSendQueueSize: size <= 0")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.sendQueueSize = s
-	return o
-}
-
 // SetMaxPacketSize 设置最大消息包大小
 // 接收到超过此上限的消息包，会默认连接非法.
-// 理论上限为 MaxUint32，default 4092 = 4096 - 4.
 func (o *TCPSessionOption) SetMaxPacketSize(s int) *TCPSessionOption {
 	if s <= 0 || s > tcpMaxPacketSize {
 		panic("gnet.TCPSessionOption.SetMaxPacketSize: size out of range")
@@ -231,56 +192,25 @@ func (o *TCPSessionOption) GetSendTimeout() time.Duration { return o.sendTimeout
 // GetReceiveBufferSize 获取接收缓冲区大小
 func (o *TCPSessionOption) GetReceiveBufferSize() int { return o.receiveBufferSize }
 
-// GetSendBufferSize 获取发送缓冲区大小
-func (o *TCPSessionOption) GetSendBufferSize() int { return o.sendBufferSize }
-
-// GetSendQueueSize 获取发送队列大小
-func (o *TCPSessionOption) GetSendQueueSize() int { return o.sendQueueSize }
+// GetSendBufferMinSize 获取最小发送缓冲区大小
+func (o *TCPSessionOption) GetSendBufferMinSize() int { return o.sendBufferSize }
 
 // GetMaxPacketSize 获取最大消息包大小
 func (o *TCPSessionOption) GetMaxPacketSize() int { return o.maxPacketSize }
 
-// getReceiveBuffer 申请接收缓冲区
-func (o *TCPSessionOption) getReceiveBuffer() *bytes.FixedBuffer {
-	return o.receiveBufferPool.Get().(*bytes.FixedBuffer)
-}
-
-// putReceiveBuffer 回收接收缓冲区
-func (o *TCPSessionOption) putReceiveBuffer(buf *bytes.FixedBuffer) {
-	if buf == nil {
-		panic("gnet.TCPSessionOption.putReceiveBuffer: buf nil")
-	}
-	buf.Reset()
-	o.receiveBufferPool.Put(buf)
-}
-
-// getSendBuffer 申请发送缓冲区
-func (o *TCPSessionOption) getSendBuffer() *bytes.FixedBuffer {
-	return o.sendBufferPool.Get().(*bytes.FixedBuffer)
-}
-
-// putSendBuffer 回收发送缓冲区
-func (o *TCPSessionOption) putSendBuffer(buf *bytes.FixedBuffer) {
-	if buf == nil {
-		panic("gnet.TCPSessionOption.putSendBuffer: buf nil")
-	}
-	buf.Reset()
-	o.sendBufferPool.Put(buf)
-}
-
 // TCPSession TCP网络会话
 type TCPSession struct {
-	locker     sync.RWMutex       // locker
-	state      int32              // 会话状态
-	conn       *net.TCPConn       // tcp conn
-	opt        *TCPSessionOption  // 会话选项，用于读取会话设置
-	handler    SessionHandler     // 会话处理器
-	sendCh     chan *Packet       // 发送队列
-	sendBuf    *bytes.FixedBuffer // 发送缓冲区
-	receiveBuf *bytes.FixedBuffer // 接收缓冲区
-	closeTag   int32              // 关闭标记
-	closeCh    chan struct{}      // 关闭ch
-	closeErr   *error             // 造成会话关闭的error
+	locker       sync.RWMutex        // locker
+	state        int32               // 会话状态
+	conn         *net.TCPConn        // tcp conn
+	opt          *TCPSessionOption   // 会话选项，用于读取会话设置
+	handler      SessionHandler      // 会话处理器
+	pendingCond  *sync.Cond          // 发送条件信号
+	pendingQueue *PendingPacketQueue // 待发送数据包队列
+	sendBuf      *bytes.FixedBuffer  // 发送缓冲区
+	receiveBuf   *bytes.FixedBuffer  // 接收缓冲区
+	closeTag     int32               // 关闭标记
+	closeErr     *error              // 造成会话关闭的error
 }
 
 // NewTCPSession 创建TCPSession
@@ -291,9 +221,8 @@ func NewTCPSession(conn *net.TCPConn) *TCPSession {
 	}
 
 	s := &TCPSession{
-		state:   SessionIdle,
-		conn:    conn,
-		closeCh: make(chan struct{}),
+		state: SessionIdle,
+		conn:  conn,
 	}
 	return s
 }
@@ -318,7 +247,8 @@ func (s *TCPSession) Start(opt *TCPSessionOption, h SessionHandler) error {
 
 	s.opt = opt.acquire()
 	s.handler = h
-	s.sendCh = make(chan *Packet, opt.GetSendQueueSize())
+	s.pendingCond = sync.NewCond(&s.locker)
+	s.pendingQueue = NewPendingPacketQueue()
 	atomic.StoreInt32(&s.state, SessionStarted)
 	go s.receiveLoop()
 	go s.sendLoop()
@@ -370,13 +300,13 @@ func (s *TCPSession) Handler() SessionHandler {
 // 如果 p 的大小超过 opt.GetMaxPacketSize() 或为0，返回 ErrPacketSizeOutOfRange。
 // 如果会话已经关闭，返回 ErrSessionClosed。如果发送队列长度已经达到 opt.GetSendQueueSize()
 // 返回 ErrSendQueueFull。
-func (s *TCPSession) SendPacket(p *Packet, timeout ...time.Duration) error {
+func (s *TCPSession) SendPacket(p *Packet) error {
 	if p == nil {
 		panic("gnet.TCPSession.SendPacket: p nil")
 	}
 
-	s.locker.RLock()
-	defer s.locker.RUnlock()
+	s.locker.Lock()
+	defer s.locker.Unlock()
 
 	if err := s.checkState(SessionStarted); err != nil {
 		return err
@@ -386,26 +316,9 @@ func (s *TCPSession) SendPacket(p *Packet, timeout ...time.Duration) error {
 		return ErrPacketSizeOutOfRange
 	}
 
-	if len(timeout) > 0 && timeout[0] > 0 {
-		timer := time.NewTimer(timeout[0])
-		defer timer.Stop()
-		select {
-		case s.sendCh <- p:
-			return nil
-		case <-s.closeCh:
-			return ErrSessionClosed
-		case <-timer.C:
-			// 超时机制
-			return ErrSendQueueFull
-		}
-	} else {
-		select {
-		case s.sendCh <- p:
-			return nil
-		case <-s.closeCh:
-			return ErrSessionClosed
-		}
-	}
+	s.pendingQueue.Push(p)
+	s.pendingCond.Signal()
+	return nil
 }
 
 // Close 关闭会话
@@ -427,10 +340,7 @@ func (s *TCPSession) close(active bool, err error) error {
 	if ok {
 		s.setCLoseErr(err)
 		_ = s.conn.Close()
-		close(s.closeCh)
-		s.locker.Lock()
-		close(s.sendCh)
-		s.locker.Unlock()
+		s.pendingCond.Signal()
 	}
 
 	if active {
@@ -447,6 +357,7 @@ func (s *TCPSession) close(active bool, err error) error {
 			s.handler = nil
 			s.locker.Unlock()
 			s.opt.release()
+			s.pendingQueue.Clear()
 		}
 		return nil
 	}
@@ -461,91 +372,55 @@ func (s *TCPSession) getCloseErr() error {
 }
 
 // sendLoop 发送循环
-// 循环的从发送队列中取出待发送的消息进行发送。消息不会直接进行发送，而是事先写ru发送缓冲区，
-// 直到发送缓冲区被填满，或所有待发送消息已经全部写入缓冲区完毕，再统一发送。发送缓冲区的大小由
-// opt.GetSendBufferSize() 提供。
 // sendLoop 在发送数据出错，或会话关闭后，会自动退出。
 func (s *TCPSession) sendLoop() {
-	var p *Packet
 	var err error
 
-	// 申请发送缓冲区
-	s.sendBuf = s.opt.getSendBuffer()
+	s.sendBuf = bytes.NewFixedBuffer(s.opt.GetSendBufferMinSize())
 
 sendLoop:
 	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
-		// 获取待发送消息包
-		p = s.popPacket(s.sendBuf.Readable() == 0)
-		if p == nil {
-			// 无待发送消息包，但缓冲区未发送完毕。
-			// 发送缓冲区中所有待发送数据。
-			if err = s.sendBuffered(true); err != nil {
-				// 发送缓冲区所有数据出错
-				err = errors.WithMessage(err, "gnet.TCPSession: send all data buffered")
+		s.locker.Lock()
+		for !s.pendingQueue.Available() && s.checkState(SessionStarted) == nil {
+			s.pendingCond.Wait()
+		}
+		s.locker.Unlock()
+
+		for p := s.pendingQueue.Pop(); p != nil; p = s.pendingQueue.Pop() {
+			if err = s.writePacket(p); err != nil {
 				break sendLoop
 			}
-			continue
+			PutPacket(p)
 		}
 
-		// 写入数据包
-		if err = s.writePacket(p); err != nil {
+		if err = s.sendBuffered(true); err != nil {
+			err = pkg_errors.WithMessage(err, "gnet.TCPSession: send data buffered")
 			break sendLoop
 		}
-
-		// 回收消息包
-		//PutPacket(p)
-		p = nil
-	}
-
-	// 发生错误的情况下回收消息包
-	if p != nil {
-		//PutPacket(p)
 	}
 
 	// 尽量保证缓存数据能发送出去
 	_ = s.sendBuffered(true)
-
-	// 回收发送缓冲区
-	s.opt.putSendBuffer(s.sendBuf)
 	s.sendBuf = nil
 
 	// 发送出错，关闭会话
 	_ = s.close(false, err)
 }
 
-// popPacket 从发送队列中取出消息包
-// wait 用于控制在队列为空的情况下，是否需要同步等待新消息的到来。p 用于返回消息包。
-// 同步等待消息的同时利用 closeCh 处理会话关闭的情况。
-func (s *TCPSession) popPacket(wait bool) (p *Packet) {
-	if wait {
-		select {
-		case p = <-s.sendCh:
-		case <-s.closeCh:
-		}
-	} else {
-		select {
-		case p = <-s.sendCh:
-		case <-s.closeCh:
-		default:
-		}
-	}
-	return
-}
-
-// writePacket 将数据包写入缓冲区
+// writePacket 将数据包写入发送缓冲区
 func (s *TCPSession) writePacket(p *Packet) error {
 	var err error
 
-	// 写大小
+	// 写包大小
 	for s.sendBuf.Writable() < tcpPacketSizeLen {
 		if err = s.sendBuffered(false); err != nil {
-			return errors.WithMessage(err, "gnet.TCPSession: write packet size: send data buffered")
+			return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet size: send data buffered")
 		}
 	}
 	err = s.sendBuf.WriteUint32(uint32(p.Readable()))
 	if err != nil {
 		// 将包大小写入缓存失败
-		return errors.WithMessage(err, "gnet.TCPSession: write packet size to buffer")
+		return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet size to buffer")
 	}
 
 	// 写包体
@@ -556,18 +431,17 @@ func (s *TCPSession) writePacket(p *Packet) error {
 		w, err = s.sendBuf.Write(data[n:])
 		if err != nil && err != buffer.ErrBufferFull {
 			// 将包数据写入缓存失败
-			return errors.WithMessage(err, "gnet.TCPSession: write packet data to buffer")
+			return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet data to buffer")
 		}
 		n += w
 
 		if s.sendBuf.Writable() < tcpPacketSizeLen {
 			if err = s.sendBuffered(false); err != nil {
-				return errors.WithMessage(err, "gnet.TCPSession: send data buffered")
+				return pkg_errors.WithMessage(err, "gnet.TCPSession: send data buffered")
 			}
 		}
 	}
-
-	return nil
+	return err
 }
 
 // sendBuffered 发送缓存在发送缓冲区中的数据
@@ -612,7 +486,7 @@ func (s *TCPSession) receiveLoop() {
 	var err error
 
 	// 申请接收缓冲区
-	s.receiveBuf = s.opt.getReceiveBuffer()
+	s.receiveBuf = bytes.NewFixedBuffer(s.opt.GetReceiveBufferSize())
 
 	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
 		if err = s.receivePacket(); err != nil {
@@ -620,10 +494,7 @@ func (s *TCPSession) receiveLoop() {
 		}
 	}
 
-	// 回收接收缓冲区
-	s.opt.putReceiveBuffer(s.receiveBuf)
 	s.receiveBuf = nil
-
 	_ = s.close(false, err)
 }
 
@@ -635,14 +506,14 @@ func (s *TCPSession) receivePacket() (err error) {
 
 	for s.receiveBuf.Readable() < tcpPacketSizeLen {
 		if err = s.receive2Buffer(); err != nil {
-			err = errors.WithMessage(err, "gnet.TCPSession: receive to buffer")
+			err = pkg_errors.WithMessage(err, "gnet.TCPSession: receive to buffer")
 			return
 		}
 	}
 
 	if u32, e := s.receiveBuf.ReadUint32(); e != nil {
 		// 读取包大小失败
-		err = errors.WithMessage(e, "gnet.TCPSession: read packet size from buffer")
+		err = pkg_errors.WithMessage(e, "gnet.TCPSession: read packet size from buffer")
 		return
 	} else {
 		packetSize = int(u32)
@@ -659,7 +530,7 @@ func (s *TCPSession) receivePacket() (err error) {
 	for {
 		n, err = packet.ReadFromN(s.receiveBuf, unread)
 		if err != nil && err != io.EOF {
-			err = errors.WithMessage(err, "gnet.TCPSession: read data from buffer")
+			err = pkg_errors.WithMessage(err, "gnet.TCPSession: read data from buffer")
 			return
 		}
 
@@ -668,7 +539,7 @@ func (s *TCPSession) receivePacket() (err error) {
 		}
 
 		if err = s.receive2Buffer(); err != nil {
-			err = errors.WithMessage(err, "gnet.TCPSession: receive data to buffer")
+			err = pkg_errors.WithMessage(err, "gnet.TCPSession: receive data to buffer")
 			return
 		}
 	}
