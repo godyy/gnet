@@ -21,7 +21,7 @@ type sessionHandler struct {
 
 func (s *sessionHandler) OnSessionPacket(session gnet.Session, packet *gnet.Packet) error {
 	s.packetCounter.Add(1)
-	s.bytesCounter.Add(int64(packet.Readable()))
+	s.bytesCounter.Add(int64(packet.Readable()) + 4)
 	sendTimeNano, err := packet.ReadInt64()
 	if err != nil {
 		return errors.WithMessage(err, "read send time")

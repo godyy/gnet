@@ -30,7 +30,7 @@ func newSessionHandler(sessions *sync.Map) *sessionHandler {
 
 func (s *sessionHandler) OnSessionPacket(session gnet.Session, packet *gnet.Packet) error {
 	s.packetCounter.Add(1)
-	s.bytesCounter.Add(int64(packet.Readable()))
+	s.bytesCounter.Add(int64(packet.Readable()) + 4)
 	return session.SendPacket(packet)
 }
 
