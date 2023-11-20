@@ -48,45 +48,30 @@ func PutPacket(p *Packet) {
 	packetPool.Put(p)
 }
 
-// PendingPacketQueue 读写分离的待发送数据包队列
-type PendingPacketQueue struct {
-	in  *list.List
-	out *list.List
+// PacketQueue Packet队列
+type PacketQueue struct {
+	list *list.List
 }
 
-func NewPendingPacketQueue() *PendingPacketQueue {
-	return &PendingPacketQueue{
-		in:  list.New(),
-		out: list.New(),
+func NewPacketQueue() *PacketQueue {
+	return &PacketQueue{
+		list: list.New(),
 	}
 }
 
-func (q *PendingPacketQueue) Available() bool {
-	if q.in.Len() <= 0 {
-		return false
-	}
+func (pq *PacketQueue) Len() int { return pq.list.Len() }
 
-	if q.out.Len() > 0 {
-		panic("gnet.PendingPacketQueue: there are packets not popped")
-	}
-
-	q.in, q.out = q.out, q.in
-	return true
+func (pq *PacketQueue) Push(p *Packet) {
+	pq.list.PushBack(p)
 }
 
-func (q *PendingPacketQueue) Push(p *Packet) {
-	q.in.PushBack(p)
-}
-
-func (q *PendingPacketQueue) Pop() *Packet {
-	front := q.out.Front()
-	if front == nil {
+func (pq *PacketQueue) Pop() *Packet {
+	if pq.list.Len() <= 0 {
 		return nil
 	}
-	return q.out.Remove(front).(*Packet)
+	return pq.list.Remove(pq.list.Front()).(*Packet)
 }
 
-func (q *PendingPacketQueue) Clear() {
-	q.in.Init()
-	q.out.Init()
+func (pq *PacketQueue) Clear() {
+	pq.list.Init()
 }

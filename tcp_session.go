@@ -200,17 +200,17 @@ func (o *TCPSessionOption) GetMaxPacketSize() int { return o.maxPacketSize }
 
 // TCPSession TCP网络会话
 type TCPSession struct {
-	locker       sync.RWMutex        // locker
-	state        int32               // 会话状态
-	conn         *net.TCPConn        // tcp conn
-	opt          *TCPSessionOption   // 会话选项，用于读取会话设置
-	handler      SessionHandler      // 会话处理器
-	pendingCond  *sync.Cond          // 发送条件信号
-	pendingQueue *PendingPacketQueue // 待发送数据包队列
-	sendBuf      *bytes.FixedBuffer  // 发送缓冲区
-	receiveBuf   *bytes.FixedBuffer  // 接收缓冲区
-	closeTag     int32               // 关闭标记
-	closeErr     *error              // 造成会话关闭的error
+	locker            sync.RWMutex       // locker
+	state             int32              // 会话状态
+	conn              *net.TCPConn       // tcp conn
+	opt               *TCPSessionOption  // 会话选项，用于读取会话设置
+	handler           SessionHandler     // 会话处理器
+	pendingPacketCond *sync.Cond         // 发送条件信号
+	pendingPacketQue  *PacketQueue       // 待发送数据包队列
+	sendBuf           *bytes.FixedBuffer // 发送缓冲区
+	receiveBuf        *bytes.FixedBuffer // 接收缓冲区
+	closeTag          int32              // 关闭标记
+	closeErr          *error             // 造成会话关闭的error
 }
 
 // NewTCPSession 创建TCPSession
@@ -247,8 +247,8 @@ func (s *TCPSession) Start(opt *TCPSessionOption, h SessionHandler) error {
 
 	s.opt = opt.acquire()
 	s.handler = h
-	s.pendingCond = sync.NewCond(&s.locker)
-	s.pendingQueue = NewPendingPacketQueue()
+	s.pendingPacketCond = sync.NewCond(&s.locker)
+	s.pendingPacketQue = NewPacketQueue()
 	atomic.StoreInt32(&s.state, SessionStarted)
 	go s.receiveLoop()
 	go s.sendLoop()
@@ -316,8 +316,8 @@ func (s *TCPSession) SendPacket(p *Packet) error {
 		return ErrPacketSizeOutOfRange
 	}
 
-	s.pendingQueue.Push(p)
-	s.pendingCond.Signal()
+	s.pendingPacketQue.Push(p)
+	s.pendingPacketCond.Signal()
 	return nil
 }
 
@@ -340,7 +340,7 @@ func (s *TCPSession) close(active bool, err error) error {
 	if ok {
 		s.setCLoseErr(err)
 		_ = s.conn.Close()
-		s.pendingCond.Signal()
+		s.pendingPacketCond.Signal()
 	}
 
 	if active {
@@ -357,7 +357,7 @@ func (s *TCPSession) close(active bool, err error) error {
 			s.handler = nil
 			s.locker.Unlock()
 			s.opt.release()
-			s.pendingQueue.Clear()
+			s.pendingPacketQue.Clear()
 		}
 		return nil
 	}
@@ -378,24 +378,10 @@ func (s *TCPSession) sendLoop() {
 
 	s.sendBuf = bytes.NewFixedBuffer(s.opt.GetSendBufferMinSize())
 
-sendLoop:
 	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
-		s.locker.Lock()
-		for !s.pendingQueue.Available() && s.checkState(SessionStarted) == nil {
-			s.pendingCond.Wait()
-		}
-		s.locker.Unlock()
-
-		for p := s.pendingQueue.Pop(); p != nil; p = s.pendingQueue.Pop() {
-			if err = s.writePacket(p); err != nil {
-				break sendLoop
-			}
-			PutPacket(p)
-		}
-
-		if err = s.sendBuffered(true); err != nil {
-			err = pkg_errors.WithMessage(err, "gnet.TCPSession: send data buffered")
-			break sendLoop
+		pq := s.swapPendingPacketQue()
+		if err = s.sendPacketQueue(pq); err != nil {
+			break
 		}
 	}
 
@@ -405,6 +391,45 @@ sendLoop:
 
 	// 发送出错，关闭会话
 	_ = s.close(false, err)
+}
+
+// swapPendingPacketQue 置换待发送消息队列
+func (s *TCPSession) swapPendingPacketQue() *PacketQueue {
+	s.locker.Lock()
+	defer s.locker.Unlock()
+	for {
+		if s.pendingPacketQue.Len() > 0 {
+			pq := s.pendingPacketQue
+			s.pendingPacketQue = NewPacketQueue()
+			return pq
+		}
+
+		if s.checkState(SessionStarted) != nil {
+			return nil
+		}
+
+		s.pendingPacketCond.Wait()
+	}
+}
+
+// sendPacketQueue 发送消息包队列
+func (s *TCPSession) sendPacketQueue(pq *PacketQueue) (err error) {
+	if pq == nil {
+		return nil
+	}
+
+	for p := pq.Pop(); p != nil; p = pq.Pop() {
+		if err = s.writePacket(p); err != nil {
+			return
+		}
+		PutPacket(p)
+	}
+
+	if err = s.sendBuffered(true); err != nil {
+		err = pkg_errors.WithMessage(err, "gnet.TCPSession: send data buffered")
+	}
+
+	return
 }
 
 // writePacket 将数据包写入发送缓冲区
