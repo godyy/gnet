@@ -3,24 +3,25 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/godyy/gnet"
-	"github.com/godyy/gnet/internal/examples/chat"
-	"github.com/godyy/gnet/internal/examples/chat/server"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/godyy/gnet"
+	"github.com/godyy/gnet/internal/examples/chat"
+	"github.com/godyy/gnet/internal/examples/chat/server"
 )
 
 func main() {
 	servPort := flag.String("serv-port", "8822", "specify service port")
 
-	opt := gnet.NewTCPSessionOption()
-	opt.SetReceiveTimeout(chat.ReceiveTimeout)
-	opt.SetSendTimeout(chat.SendTimeout)
+	cfg := gnet.NewTcpSessionCfg()
+	cfg.ReceiveTimeout = chat.ReceiveTimeout
+	cfg.SendTimeout = chat.SendTimeout
 	servAddr := fmt.Sprintf(":%s", *servPort)
 	s := server.NewServer()
-	if err := s.Start(servAddr, opt); err != nil {
+	if err := s.Start(servAddr, cfg); err != nil {
 		log.Fatalf("server start: %v", err)
 	} else {
 		log.Printf("server started, listening at %s", servAddr)

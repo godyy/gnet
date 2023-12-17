@@ -30,191 +30,100 @@ const (
 	tcpDefaultSendBufferSize = 4096
 )
 
-// TCPSessionOption TCP会话选项
-type TCPSessionOption struct {
-	locker sync.Mutex
+type TcpSessionCfgReadonly interface {
+	GetReceiveTimeout() int
+	GetReceiveTimeoutDuration() time.Duration
+	GetSendTimeout() int
+	GetSendTimeoutDuration() time.Duration
+	GetReceiveBufferSize() int
+	GetSendBufferSize() int
+	GetMaxPacketSize() int
+}
 
-	// refCount 引用计数
-	// 值大于0时，表示被占用，无法修改属性。
-	refCount int
-
-	// receiveTimeout 接收超时
+// TcpSessionCfg Tcp会话配置
+type TcpSessionCfg struct {
+	// ReceiveTimeout 接收超时 ms
 	// default zero, mean no limit.
-	receiveTimeout time.Duration
+	ReceiveTimeout int
 
-	// sendTimeout 发送超时
+	// SendTimeout 发送超时 ms
 	// default zero, mean no limit.
-	sendTimeout time.Duration
+	SendTimeout int
 
-	// receiveBufferSize 接收缓冲区大小
+	// ReceiveBufferSize 接收缓冲区大小
 	// default 4096.
-	receiveBufferSize int
+	ReceiveBufferSize int
 
-	// sendBufferSize 发送缓冲区大小
+	// SendBufferSize 发送缓冲区大小
 	// default 4096.
-	sendBufferSize int
+	SendBufferSize int
 
-	// maxPacketSize 最大消息包大小
+	// MaxPacketSize 最大消息包大小
 	// 接收到超过此上限的消息包，会默认连接非法.
 	// 理论上限为 MaxUint32，default 4092 = 4096 - 4.
-	maxPacketSize int
+	MaxPacketSize int
 }
 
-// NewTCPSessionOption 创建默认TCP会话选项
-func NewTCPSessionOption() *TCPSessionOption {
-	return &TCPSessionOption{
-		receiveTimeout:    0,
-		sendTimeout:       0,
-		receiveBufferSize: tcpDefaultReceiveBufferSize,
-		sendBufferSize:    tcpDefaultSendBufferSize,
-		maxPacketSize:     tcpDefaultReceiveBufferSize - tcpPacketSizeLen,
-	}
-}
-
-// acquire 占用，增加引用计数。
-// 当引用计数>0时，表示选项正在被使用。当选项被占用后，选项的相关属性值不得再更改。
-func (o *TCPSessionOption) acquire() *TCPSessionOption {
-	o.locker.Lock()
-	defer o.locker.Unlock()
-	o.refCount++
-	return o
-}
-
-// release 释放，降低引用计数。
-// 当引用计数==0时，表示选项没有被占用，可以修改选项相关的属性值。
-func (o *TCPSessionOption) release() {
-	o.locker.Lock()
-	defer o.locker.Unlock()
-	if o.refCount > 0 {
-		o.refCount--
+func NewTcpSessionCfg() *TcpSessionCfg {
+	return &TcpSessionCfg{
+		ReceiveTimeout:    0,
+		SendTimeout:       0,
+		ReceiveBufferSize: tcpDefaultReceiveBufferSize,
+		SendBufferSize:    tcpDefaultSendBufferSize,
+		MaxPacketSize:     tcpDefaultReceiveBufferSize - tcpPacketSizeLen,
 	}
 }
 
-// lock 锁定
-// 若选项未被占用，加锁成功，可以对选项属性值进行修改。反之，锁定失败。
-func (o *TCPSessionOption) lock() bool {
-	o.locker.Lock()
-	if o.refCount > 0 {
-		o.locker.Unlock()
-		return false
-	}
-	return true
+func (c *TcpSessionCfg) GetReceiveTimeout() int {
+	return c.ReceiveTimeout
 }
 
-// unlock 解除锁定
-// 修改完成后，解除对选项的锁定。
-func (o *TCPSessionOption) unlock() {
-	o.locker.Unlock()
+func (c *TcpSessionCfg) GetReceiveTimeoutDuration() time.Duration {
+	return time.Duration(c.ReceiveTimeout) * time.Millisecond
 }
 
-// SetReceiveTimeout 设置接收超时
-func (o *TCPSessionOption) SetReceiveTimeout(timeout time.Duration) *TCPSessionOption {
-	if timeout < 0 {
-		panic("gnet.TCPSessionOption.SetReceiveTimeout: timeout < 0")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.receiveTimeout = timeout
-	return o
+func (c *TcpSessionCfg) GetSendTimeout() int {
+	return c.SendTimeout
 }
 
-// SetSendTimeout 设置发送超时
-func (o *TCPSessionOption) SetSendTimeout(timeout time.Duration) *TCPSessionOption {
-	if timeout < 0 {
-		panic("gnet.TCPSessionOption.SetSendTimeout: timeout < 0")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.sendTimeout = timeout
-	return o
+func (c *TcpSessionCfg) GetSendTimeoutDuration() time.Duration {
+	return time.Duration(c.SendTimeout) * time.Millisecond
 }
 
-// SetReceiveBufferSize 设置接收缓冲区大小
-func (o *TCPSessionOption) SetReceiveBufferSize(s int) *TCPSessionOption {
-	if s <= 0 {
-		panic("gnet.TCPSessionOption.SetReceiveBufferSize: size <= 0")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.receiveBufferSize = s
-	return o
+func (c *TcpSessionCfg) GetReceiveBufferSize() int {
+	return c.ReceiveBufferSize
 }
 
-// SetSendBufferSize 设置发送缓冲区大小
-func (o *TCPSessionOption) SetSendBufferSize(s int) *TCPSessionOption {
-	if s <= 0 {
-		panic("gnet.TCPSessionOption.SetSendBufferSize: size <= 0")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.sendBufferSize = s
-	return o
+func (c *TcpSessionCfg) GetSendBufferSize() int {
+	return c.SendBufferSize
 }
 
-// SetMaxPacketSize 设置最大消息包大小
-// 接收到超过此上限的消息包，会默认连接非法.
-func (o *TCPSessionOption) SetMaxPacketSize(s int) *TCPSessionOption {
-	if s <= 0 || s > tcpMaxPacketSize {
-		panic("gnet.TCPSessionOption.SetMaxPacketSize: size out of range")
-	}
-
-	if !o.lock() {
-		return o
-	}
-	defer o.unlock()
-
-	o.maxPacketSize = s
-	return o
+func (c *TcpSessionCfg) GetMaxPacketSize() int {
+	return c.MaxPacketSize
 }
 
-// GetReceiveTimeout 获取接收超时
-func (o *TCPSessionOption) GetReceiveTimeout() time.Duration { return o.receiveTimeout }
-
-// GetSendTimeout 获取发送超时
-func (o *TCPSessionOption) GetSendTimeout() time.Duration { return o.sendTimeout }
-
-// GetReceiveBufferSize 获取接收缓冲区大小
-func (o *TCPSessionOption) GetReceiveBufferSize() int { return o.receiveBufferSize }
-
-// GetSendBufferMinSize 获取最小发送缓冲区大小
-func (o *TCPSessionOption) GetSendBufferMinSize() int { return o.sendBufferSize }
-
-// GetMaxPacketSize 获取最大消息包大小
-func (o *TCPSessionOption) GetMaxPacketSize() int { return o.maxPacketSize }
+func (c *TcpSessionCfg) GetReadOnly() TcpSessionCfgReadonly {
+	cp := *c
+	return &cp
+}
 
 // TCPSession TCP网络会话
 type TCPSession struct {
-	locker            sync.RWMutex       // locker
-	state             int32              // 会话状态
-	conn              *net.TCPConn       // tcp conn
-	opt               *TCPSessionOption  // 会话选项，用于读取会话设置
-	handler           SessionHandler     // 会话处理器
-	pendingPacketCond *sync.Cond         // 发送条件信号
-	pendingPacketQue  *PacketQueue       // 待发送数据包队列
-	sendBuf           *bytes.FixedBuffer // 发送缓冲区
-	receiveBuf        *bytes.FixedBuffer // 接收缓冲区
-	closeTag          int32              // 关闭标记
-	closeErr          *error             // 造成会话关闭的error
+	locker            sync.RWMutex          // locker
+	state             int32                 // 会话状态
+	conn              *net.TCPConn          // tcp conn
+	cfg               TcpSessionCfgReadonly // 会话配置，用于读取会话设置
+	handler           SessionHandler        // 会话处理器
+	pendingPacketCond *sync.Cond            // 发送条件信号
+	pendingPacketQue  *PacketQueue          // 待发送数据包队列
+	sendBuf           *bytes.FixedBuffer    // 发送缓冲区
+	receiveBuf        *bytes.FixedBuffer    // 接收缓冲区
+	closeTag          int32                 // 关闭标记
+	closeErr          *error                // 造成会话关闭的error
 }
 
 // NewTCPSession 创建TCPSession
-// conn 为底层TCP连接，opt 提供TCPSession使用的选项参数，h 为会话事件处理处理器
+// conn 为底层TCP连接，cfg 提供TCPSession使用的配置参数，h 为会话事件处理处理器
 func NewTCPSession(conn *net.TCPConn) *TCPSession {
 	if conn == nil {
 		panic("gnet.NewTCPSession: conn nil")
@@ -227,11 +136,11 @@ func NewTCPSession(conn *net.TCPConn) *TCPSession {
 	return s
 }
 
-// Start 根据opt提供的选项参数启动后台goroutine，使会话进入SessionRunning状态。
+// Start 根据cfg提供的配置参数启动后台goroutine，使会话进入SessionRunning状态。
 // 通过h反馈会话事件。
-func (s *TCPSession) Start(opt *TCPSessionOption, h SessionHandler) error {
-	if opt == nil {
-		panic("gnet.TCPSession.Start: opt nil")
+func (s *TCPSession) Start(cfg TcpSessionCfgReadonly, h SessionHandler) error {
+	if cfg == nil {
+		panic("gnet.TCPSession.Start: cfg nil")
 	}
 
 	if h == nil {
@@ -245,7 +154,7 @@ func (s *TCPSession) Start(opt *TCPSessionOption, h SessionHandler) error {
 		return err
 	}
 
-	s.opt = opt.acquire()
+	s.cfg = cfg
 	s.handler = h
 	s.pendingPacketCond = sync.NewCond(&s.locker)
 	s.pendingPacketQue = NewPacketQueue()
@@ -297,9 +206,8 @@ func (s *TCPSession) Handler() SessionHandler {
 
 // SendPacket 发送数据包
 // p 所提供的消息包不会立即发送，而是被放入发送队列中，等待发送goroutine提取并发送。
-// 如果 p 的大小超过 opt.GetMaxPacketSize() 或为0，返回 ErrPacketSizeOutOfRange。
-// 如果会话已经关闭，返回 ErrSessionClosed。如果发送队列长度已经达到 opt.GetSendQueueSize()
-// 返回 ErrSendQueueFull。
+// 如果 p 的大小超过 cfg.GetMaxPacketSize() 或为0，返回 ErrPacketSizeOutOfRange。
+// 如果会话已经关闭，返回 ErrSessionClosed。
 func (s *TCPSession) SendPacket(p *Packet) error {
 	if p == nil {
 		panic("gnet.TCPSession.SendPacket: p nil")
@@ -312,7 +220,7 @@ func (s *TCPSession) SendPacket(p *Packet) error {
 		return err
 	}
 
-	if size := p.Readable(); size == 0 || size > s.opt.GetMaxPacketSize() {
+	if size := p.Readable(); size == 0 || size > s.cfg.GetMaxPacketSize() {
 		return ErrPacketSizeOutOfRange
 	}
 
@@ -356,7 +264,6 @@ func (s *TCPSession) close(active bool, err error) error {
 			s.locker.Lock()
 			s.handler = nil
 			s.locker.Unlock()
-			s.opt.release()
 			s.pendingPacketQue.Clear()
 		}
 		return nil
@@ -376,7 +283,7 @@ func (s *TCPSession) getCloseErr() error {
 func (s *TCPSession) sendLoop() {
 	var err error
 
-	s.sendBuf = bytes.NewFixedBuffer(s.opt.GetSendBufferMinSize())
+	s.sendBuf = bytes.NewFixedBuffer(s.cfg.GetSendBufferSize())
 
 	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
 		pq := s.swapPendingPacketQue()
@@ -478,7 +385,7 @@ func (s *TCPSession) sendBuffered(all bool) (err error) {
 
 	for {
 		// set write timeout
-		if sendTimeout := s.opt.GetSendTimeout(); sendTimeout > 0 {
+		if sendTimeout := s.cfg.GetSendTimeoutDuration(); sendTimeout > 0 {
 			s.conn.SetWriteDeadline(time.Now().Add(sendTimeout))
 		} else {
 			s.conn.SetWriteDeadline(time.Time{})
@@ -505,13 +412,13 @@ func (s *TCPSession) sendBuffered(all bool) (err error) {
 
 // receiveLoop 接收循环
 // 循环的接收数据，生成消息包并推入接收队列。数据会事先读入接收缓冲区中，待缓冲区中数据足够，
-// 再生成消息包。接收缓冲区的大小由 opt.GetReceiveBufferSize 提供。
+// 再生成消息包。接收缓冲区的大小由 cfg.GetReceiveBufferSize 提供。
 // receiveLoop 在接收出错或会话关闭后会自动退出。
 func (s *TCPSession) receiveLoop() {
 	var err error
 
 	// 申请接收缓冲区
-	s.receiveBuf = bytes.NewFixedBuffer(s.opt.GetReceiveBufferSize())
+	s.receiveBuf = bytes.NewFixedBuffer(s.cfg.GetReceiveBufferSize())
 
 	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
 		if err = s.receivePacket(); err != nil {
@@ -542,7 +449,7 @@ func (s *TCPSession) receivePacket() (err error) {
 		return
 	} else {
 		packetSize = int(u32)
-		if packetSize == 0 || packetSize > s.opt.GetMaxPacketSize() {
+		if packetSize == 0 || packetSize > s.cfg.GetMaxPacketSize() {
 			// 包大小超出范围
 			err = fmt.Errorf("gnet.TCPSession: receive packet size %d out of range", packetSize)
 			return
@@ -577,7 +484,7 @@ func (s *TCPSession) receivePacket() (err error) {
 // err 用于返回读取过程中出现的错误
 func (s *TCPSession) receive2Buffer() (err error) {
 	// set read timeout
-	if receiveTimeout := s.opt.GetReceiveTimeout(); receiveTimeout > 0 {
+	if receiveTimeout := s.cfg.GetReceiveTimeoutDuration(); receiveTimeout > 0 {
 		s.conn.SetReadDeadline(time.Now().Add(receiveTimeout))
 	} else {
 		s.conn.SetReadDeadline(time.Time{})

@@ -27,12 +27,13 @@ func (h *testSessionHandler) OnSessionClosed(session Session, err error) {
 func TestTCP(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 
-	opt := NewTCPSessionOption().
-		//SetSendTimeout(10 * time.Second).
-		//SetReceiveTimeout(10 * time.Second).
-		SetMaxPacketSize(128).
-		SetSendBufferSize(5).
-		SetReceiveBufferSize(5)
+	cfg := (&TcpSessionCfg{
+		// SendTimeout:       5000,
+		// ReceiveTimeout:    5000,
+		ReceiveBufferSize: 5,
+		SendBufferSize:    5,
+		MaxPacketSize:     128,
+	}).GetReadOnly()
 	addr := "localhost:9999"
 
 	serverSessionCount := &sync.WaitGroup{}
@@ -62,7 +63,7 @@ func TestTCP(t *testing.T) {
 			tcpConn := conn.(*net.TCPConn)
 			serverSessionCount.Add(1)
 			session := NewTCPSession(tcpConn)
-			if err := session.Start(opt, serverHandler); err != nil {
+			if err := session.Start(cfg, serverHandler); err != nil {
 				t.Log("session start", err)
 			}
 		})
@@ -85,7 +86,7 @@ func TestTCP(t *testing.T) {
 			t.Fatal("connect:", err)
 		}
 		clientSessionCountWait.Add(1)
-		if err := session.Start(opt, clientHandler); err != nil {
+		if err := session.Start(cfg, clientHandler); err != nil {
 			t.Fatal("session start:", err)
 		}
 		go func(session *TCPSession, no int) {
@@ -109,17 +110,13 @@ func TestTCP(t *testing.T) {
 
 	clientSessionCountWait.Wait()
 	serverSessionCount.Wait()
-
-	if !opt.lock() {
-		t.Fatal("option ref-count > 0")
-	}
 }
 
 func TestTCPPacketGreaterThanBuffer(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 
-	opt := NewTCPSessionOption().
-		SetMaxPacketSize(10240)
+	cfg := NewTcpSessionCfg()
+	cfg.MaxPacketSize = 10240
 	addr := "localhost:9999"
 
 	serverSessionCount := &sync.WaitGroup{}
@@ -148,7 +145,7 @@ func TestTCPPacketGreaterThanBuffer(t *testing.T) {
 			tcpConn := conn.(*net.TCPConn)
 			serverSessionCount.Add(1)
 			session := NewTCPSession(tcpConn)
-			if err := session.Start(opt, serverHandler); err != nil {
+			if err := session.Start(cfg, serverHandler); err != nil {
 				t.Log("session start", err)
 			}
 		})
@@ -165,7 +162,7 @@ func TestTCPPacketGreaterThanBuffer(t *testing.T) {
 		t.Fatal("connect:", err)
 	}
 
-	if err := session.Start(opt, clientHandler); err != nil {
+	if err := session.Start(cfg, clientHandler); err != nil {
 		t.Fatal("session start:", err)
 	}
 
@@ -195,8 +192,8 @@ func TestTCPPacketGreaterThanBuffer(t *testing.T) {
 func TestTCPExceedMaxPacket(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 
-	opt := NewTCPSessionOption().
-		SetMaxPacketSize(128)
+	cfg := NewTcpSessionCfg()
+	cfg.MaxPacketSize = 128
 	addr := "localhost:9999"
 
 	serverSessionCount := &sync.WaitGroup{}
@@ -225,7 +222,7 @@ func TestTCPExceedMaxPacket(t *testing.T) {
 			tcpConn := conn.(*net.TCPConn)
 			serverSessionCount.Add(1)
 			session := NewTCPSession(tcpConn)
-			if err := session.Start(opt, serverHandler); err != nil {
+			if err := session.Start(cfg, serverHandler); err != nil {
 				t.Log("session start", err)
 			}
 		})
@@ -233,8 +230,8 @@ func TestTCPExceedMaxPacket(t *testing.T) {
 		close(chListenerStopped)
 	}()
 
-	optCopy := *opt
-	optCopy.SetMaxPacketSize(256)
+	cfgCopy := *cfg
+	cfgCopy.MaxPacketSize = 256
 	clientHandler := &testSessionHandler{
 		onSessionPacket: func(session Session, packet *Packet) error { return nil },
 		onSessionClose:  func(session Session, err error) {},
@@ -243,7 +240,7 @@ func TestTCPExceedMaxPacket(t *testing.T) {
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
-	if err := session.Start(&optCopy, clientHandler); err != nil {
+	if err := session.Start(&cfgCopy, clientHandler); err != nil {
 		t.Fatal("session start:", err)
 	}
 	if err := session.SendPacket(NewPacketWithData(make([]byte, 256))); err != nil {

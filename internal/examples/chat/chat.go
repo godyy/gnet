@@ -1,10 +1,11 @@
 package chat
 
 import (
+	"time"
+
 	"github.com/godyy/gnet"
 	"github.com/godyy/gnet/internal/examples/chat/protocol"
 	"github.com/pkg/errors"
-	"time"
 )
 
 const (
@@ -14,8 +15,8 @@ const (
 )
 
 const (
-	ReceiveTimeout         = 60 * time.Second
-	SendTimeout            = 5 * time.Second
+	ReceiveTimeout         = 60 * 1000
+	SendTimeout            = 5 * 1000
 	RequestTimeout         = 10 * time.Second
 	MaxLengthOfUserName    = 16
 	MaxLengthOfChatContent = 200

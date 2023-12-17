@@ -2,14 +2,15 @@ package client
 
 import (
 	"fmt"
-	"github.com/godyy/gnet"
-	"github.com/godyy/gnet/internal/examples/chat"
-	"github.com/godyy/gnet/internal/examples/chat/protocol"
-	"github.com/pkg/errors"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	"github.com/godyy/gnet"
+	"github.com/godyy/gnet/internal/examples/chat"
+	"github.com/godyy/gnet/internal/examples/chat/protocol"
+	"github.com/pkg/errors"
 )
 
 var ErrRequestTimeout = errors.New("request timeout")
@@ -39,7 +40,7 @@ func NewClient(handler Handler) *Client {
 	}
 }
 
-func (c *Client) Start(session *gnet.TCPSession, userName string, opt *gnet.TCPSessionOption) error {
+func (c *Client) Start(session *gnet.TCPSession, userName string, opt gnet.TcpSessionCfgReadonly) error {
 	if userName == "" {
 		return errors.New("user name empty")
 	}

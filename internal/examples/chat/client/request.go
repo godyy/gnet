@@ -2,8 +2,9 @@ package client
 
 import (
 	"container/heap"
-	"github.com/godyy/gnet/internal/examples/chat/protocol"
 	"time"
+
+	"github.com/godyy/gnet/internal/examples/chat/protocol"
 )
 
 type Request struct {

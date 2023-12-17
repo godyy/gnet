@@ -3,15 +3,16 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"sync"
+	"time"
+
 	"github.com/chzyer/readline"
 	"github.com/godyy/gnet"
 	"github.com/godyy/gnet/internal/examples/chat"
 	client2 "github.com/godyy/gnet/internal/examples/chat/client"
 	"github.com/godyy/gnet/internal/examples/chat/protocol"
 	"github.com/pkg/errors"
-	"log"
-	"sync"
-	"time"
 )
 
 var (
@@ -19,14 +20,14 @@ var (
 
 	serverAddr = flag.String("server-addr", "localhost:8822", "specify server address")
 
-	opt = gnet.NewTCPSessionOption()
+	cfg = gnet.NewTcpSessionCfg()
 )
 
 func main() {
 	flag.Parse()
 
-	opt.SetReceiveTimeout(chat.ReceiveTimeout)
-	opt.SetSendTimeout(chat.SendTimeout)
+	cfg.ReceiveTimeout = chat.ReceiveTimeout
+	cfg.SendTimeout = chat.SendTimeout
 
 	client := newClient()
 	if err := client.loop(); err != nil {
@@ -125,7 +126,7 @@ func (c *client) loop() error {
 			}
 
 			c.client = client2.NewClient(c)
-			if err := c.client.Start(session, userName, opt); err != nil {
+			if err := c.client.Start(session, userName, cfg); err != nil {
 				c.print(fmt.Sprintf("登陆服务器失败: %v", err))
 				continue
 			}

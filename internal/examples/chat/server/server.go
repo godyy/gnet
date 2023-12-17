@@ -2,16 +2,17 @@ package server
 
 import (
 	"errors"
-	"github.com/godyy/gnet"
-	"github.com/godyy/gnet/internal/examples/chat"
-	"github.com/godyy/gnet/internal/examples/chat/protocol"
 	"log"
 	"net"
 	"time"
+
+	"github.com/godyy/gnet"
+	"github.com/godyy/gnet/internal/examples/chat"
+	"github.com/godyy/gnet/internal/examples/chat/protocol"
 )
 
 type Server struct {
-	opt       *gnet.TCPSessionOption
+	cfg       gnet.TcpSessionCfgReadonly
 	listener  *gnet.TCPListener  // 网络监听器
 	users     map[string]*user   // 用户
 	requestCh chan serverRequest // 请求channel
@@ -21,12 +22,12 @@ func NewServer() *Server {
 	return &Server{}
 }
 
-func (s *Server) getOpt() *gnet.TCPSessionOption {
-	return s.opt
+func (s *Server) getCfg() gnet.TcpSessionCfgReadonly {
+	return s.cfg
 }
 
-func (s *Server) Start(addr string, opt *gnet.TCPSessionOption) error {
-	s.opt = opt
+func (s *Server) Start(addr string, cfg gnet.TcpSessionCfgReadonly) error {
+	s.cfg = cfg
 
 	var err error
 	s.listener, err = gnet.ListenTCP("tcp", addr)

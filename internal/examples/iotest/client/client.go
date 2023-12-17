@@ -47,13 +47,13 @@ func main() {
 	testTime := flag.Int("test-time", 5000, "test time in milliseconds")
 	flag.Parse()
 
-	sessionOpt := gnet.NewTCPSessionOption().
-		SetSendBufferSize(*sendBufferSize).
-		SetReceiveBufferSize(*receiveBufferSize).
-		SetMaxPacketSize(*maxPacketSize)
+	sessionCfg := gnet.NewTcpSessionCfg()
+	sessionCfg.SendBufferSize = *sendBufferSize
+	sessionCfg.ReceiveBufferSize = *receiveBufferSize
+	sessionCfg.MaxPacketSize = *maxPacketSize
 	handler := &sessionHandler{}
 
-	log.Printf("%+v", sessionOpt)
+	log.Printf("%+v", sessionCfg)
 
 	clientSession, err := gnet.ConnectTCP("tcp", *serverAddr)
 	if err != nil {
@@ -63,7 +63,7 @@ func main() {
 	beginTime := time.Now()
 	rand.Seed(beginTime.UnixNano())
 
-	if err = clientSession.Start(sessionOpt, handler); err != nil {
+	if err = clientSession.Start(sessionCfg, handler); err != nil {
 		log.Fatalf("start session -> %v", err)
 	}
 

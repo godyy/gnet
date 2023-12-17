@@ -56,12 +56,12 @@ func main() {
 	maxPacketSize := flag.Int("max-packet-size", 1024, "max packet size")
 	flag.Parse()
 
-	sessionOpt := gnet.NewTCPSessionOption().
-		SetSendBufferSize(*sendBufferSize).
-		SetReceiveBufferSize(*receiveBufferSize).
-		SetMaxPacketSize(*maxPacketSize)
+	sessionCfg := gnet.NewTcpSessionCfg()
+	sessionCfg.SendBufferSize = *sendBufferSize
+	sessionCfg.ReceiveBufferSize = *receiveBufferSize
+	sessionCfg.MaxPacketSize = *maxPacketSize
 
-	log.Printf("%+v", sessionOpt)
+	log.Printf("%+v", sessionCfg)
 
 	listener, err := gnet.ListenTCP("tcp", *serverAddr)
 	if err != nil {
@@ -73,7 +73,7 @@ func main() {
 	go func() {
 		err := listener.Start(func(conn net.Conn) {
 			session := gnet.NewTCPSession(conn.(*net.TCPConn))
-			if err := session.Start(sessionOpt, newSessionHandler(sessions)); err != nil {
+			if err := session.Start(sessionCfg, newSessionHandler(sessions)); err != nil {
 				log.Fatalf("session start -> %v", err)
 			} else {
 				log.Println("session started.")

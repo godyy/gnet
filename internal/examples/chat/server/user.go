@@ -2,13 +2,14 @@ package server
 
 import (
 	"fmt"
+	"log"
+	"sync/atomic"
+	"unicode/utf8"
+
 	"github.com/godyy/gnet"
 	"github.com/godyy/gnet/internal/examples/chat"
 	"github.com/godyy/gnet/internal/examples/chat/protocol"
 	"github.com/pkg/errors"
-	"log"
-	"sync/atomic"
-	"unicode/utf8"
 )
 
 const (
@@ -33,7 +34,7 @@ func newUser(server *Server, session *gnet.TCPSession) *user {
 
 func (u *user) start() error {
 	if atomic.CompareAndSwapInt32(&u.state, 0, userStarted) {
-		if err := u.session.Start(u.server.getOpt(), u); err != nil {
+		if err := u.session.Start(u.server.getCfg(), u); err != nil {
 			return err
 		}
 		return nil
