@@ -12,7 +12,7 @@ type TCPListener struct {
 
 // Start 开始监听连接
 // Start内部会一直保持阻塞状态监听连接请求，直到有新的请求到来，或者TCPListener被关闭，或者出现错误
-func (l *TCPListener) Start(onNewConn func(net.Conn)) error {
+func (l *TCPListener) Start(onNewConn func(*net.TCPConn)) error {
 	if onNewConn == nil {
 		panic("gnet.TCPListener.Start: onNewConn nil")
 	}

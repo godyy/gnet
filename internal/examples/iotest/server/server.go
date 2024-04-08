@@ -14,6 +14,12 @@ import (
 	"github.com/godyy/gnet"
 )
 
+var packetPool = &sync.Pool{
+	New: func() any {
+		return gnet.NewPacket(nil)
+	},
+}
+
 type sessionHandler struct {
 	sessions      *sync.Map
 	beginTime     time.Time
@@ -28,9 +34,20 @@ func newSessionHandler(sessions *sync.Map) *sessionHandler {
 	}
 }
 
-func (s *sessionHandler) OnSessionPacket(session gnet.Session, packet *gnet.Packet) error {
+func (s *sessionHandler) GetPacket(size int) gnet.CustomPacket {
+	p := packetPool.Get().(*gnet.Packet)
+	p.Grow(size, true)
+	return p
+}
+
+func (s *sessionHandler) PutPacket(p gnet.CustomPacket) {
+	p.(*gnet.Packet).Reset()
+	packetPool.Put(p)
+}
+
+func (s *sessionHandler) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) error {
 	s.packetCounter.Add(1)
-	s.bytesCounter.Add(int64(packet.Readable()) + 4)
+	s.bytesCounter.Add(int64(len(packet.Data())) + 4)
 	return session.SendPacket(packet)
 }
 
@@ -71,9 +88,9 @@ func main() {
 	sessions := &sync.Map{}
 
 	go func() {
-		err := listener.Start(func(conn net.Conn) {
-			session := gnet.NewTCPSession(conn.(*net.TCPConn))
-			if err := session.Start(sessionCfg, newSessionHandler(sessions)); err != nil {
+		err := listener.Start(func(conn *net.TCPConn) {
+			session := gnet.NewTCPSession(conn, sessionCfg)
+			if err := session.Start(newSessionHandler(sessions)); err != nil {
 				log.Fatalf("session start -> %v", err)
 			} else {
 				log.Println("session started.")

@@ -3,7 +3,6 @@ package gnet
 import (
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -20,25 +19,12 @@ const (
 	// tcp消息包包体大小字节长度
 	tcpPacketSizeLen = 4
 
-	// tcp消息包包体理论最大大小
-	tcpMaxPacketSize = math.MaxUint32
-
 	// tcp会话默认接收缓冲区大小
 	tcpDefaultReceiveBufferSize = 4096
 
 	// tcp会话默认发送缓冲区大小
 	tcpDefaultSendBufferSize = 4096
 )
-
-type TcpSessionCfgReadonly interface {
-	GetReceiveTimeout() int
-	GetReceiveTimeoutDuration() time.Duration
-	GetSendTimeout() int
-	GetSendTimeoutDuration() time.Duration
-	GetReceiveBufferSize() int
-	GetSendBufferSize() int
-	GetMaxPacketSize() int
-}
 
 // TcpSessionCfg Tcp会话配置
 type TcpSessionCfg struct {
@@ -74,117 +60,72 @@ func NewTcpSessionCfg() *TcpSessionCfg {
 	}
 }
 
-func (c *TcpSessionCfg) GetReceiveTimeout() int {
-	return c.ReceiveTimeout
+func (c *TcpSessionCfg) ReceiveTimeoutDuration() time.Duration {
+	return time2Duration(c.ReceiveTimeout)
 }
 
-func (c *TcpSessionCfg) GetReceiveTimeoutDuration() time.Duration {
-	return time.Duration(c.ReceiveTimeout) * time.Millisecond
-}
-
-func (c *TcpSessionCfg) GetSendTimeout() int {
-	return c.SendTimeout
-}
-
-func (c *TcpSessionCfg) GetSendTimeoutDuration() time.Duration {
-	return time.Duration(c.SendTimeout) * time.Millisecond
-}
-
-func (c *TcpSessionCfg) GetReceiveBufferSize() int {
-	return c.ReceiveBufferSize
-}
-
-func (c *TcpSessionCfg) GetSendBufferSize() int {
-	return c.SendBufferSize
-}
-
-func (c *TcpSessionCfg) GetMaxPacketSize() int {
-	return c.MaxPacketSize
-}
-
-func (c *TcpSessionCfg) GetReadOnly() TcpSessionCfgReadonly {
-	cp := *c
-	return &cp
+func (c *TcpSessionCfg) SendTimeoutDuration() time.Duration {
+	return time2Duration(c.SendTimeout)
 }
 
 // TCPSession TCP网络会话
 type TCPSession struct {
-	locker            sync.RWMutex          // locker
-	state             int32                 // 会话状态
-	conn              *net.TCPConn          // tcp conn
-	cfg               TcpSessionCfgReadonly // 会话配置，用于读取会话设置
-	handler           SessionHandler        // 会话处理器
-	pendingPacketCond *sync.Cond            // 发送条件信号
-	pendingPacketQue  *PacketQueue          // 待发送数据包队列
-	sendBuf           *bytes.FixedBuffer    // 发送缓冲区
-	receiveBuf        *bytes.FixedBuffer    // 接收缓冲区
-	closeTag          int32                 // 关闭标记
-	closeErr          *error                // 造成会话关闭的error
+	locker            *sync.RWMutex      // locker
+	state             int32              // 会话状态
+	conn              *net.TCPConn       // tcp conn
+	cfg               *TcpSessionCfg     // 会话配置，用于读取会话设置
+	pUserData         *any               // 存储与该会话唯一关联的数据
+	pHandler          *SessionHandler    // 会话处理器
+	pendingPacketCond *sync.Cond         // 发送条件信号
+	pendingPacketQue  *PacketQueue       // 待发送数据包队列
+	sendingPacketQue  *PacketQueue       // 正发送数据包队列
+	sendBuf           *bytes.FixedBuffer // 发送缓冲区
+	receiveBuf        *bytes.FixedBuffer // 接收缓冲区
+	closeFlag         int32              // 关闭标记
+	closeErr          error              // 造成会话关闭的error
 }
 
 // NewTCPSession 创建TCPSession
 // conn 为底层TCP连接，cfg 提供TCPSession使用的配置参数，h 为会话事件处理处理器
-func NewTCPSession(conn *net.TCPConn) *TCPSession {
+func NewTCPSession(conn *net.TCPConn, cfg *TcpSessionCfg) *TCPSession {
 	if conn == nil {
 		panic("gnet.NewTCPSession: conn nil")
 	}
 
+	if cfg == nil {
+		panic("gnet.NewTCPSession: cfg nil")
+	}
+
 	s := &TCPSession{
-		state: SessionIdle,
-		conn:  conn,
+		locker: &sync.RWMutex{},
+		state:  sessionInit,
+		conn:   conn,
+		cfg:    cfg,
 	}
 	return s
 }
 
-// Start 根据cfg提供的配置参数启动后台goroutine，使会话进入SessionRunning状态。
-// 通过h反馈会话事件。
-func (s *TCPSession) Start(cfg TcpSessionCfgReadonly, h SessionHandler) error {
-	if cfg == nil {
-		panic("gnet.TCPSession.Start: cfg nil")
-	}
-
-	if h == nil {
-		panic("gnet.TCPSession.Start: h nil")
+// Start 启动会话
+func (s *TCPSession) Start(handler SessionHandler) error {
+	if handler == nil {
+		panic("gnet.NewTCPSession: handler nil")
 	}
 
 	s.locker.Lock()
 	defer s.locker.Unlock()
 
-	if err := s.checkState(SessionIdle); err != nil {
-		return err
+	if s.state != sessionInit {
+		return getSessionStateErr(s.state)
 	}
 
-	s.cfg = cfg
-	s.handler = h
-	s.pendingPacketCond = sync.NewCond(&s.locker)
+	s.setHandler(handler)
+	s.pendingPacketCond = sync.NewCond(s.locker)
 	s.pendingPacketQue = NewPacketQueue()
-	atomic.StoreInt32(&s.state, SessionStarted)
+	s.sendingPacketQue = NewPacketQueue()
+	s.state = sessionStarted
 	go s.receiveLoop()
 	go s.sendLoop()
 	return nil
-}
-
-// State 获取会话当前所处状态。
-func (s *TCPSession) State() int32 {
-	return atomic.LoadInt32(&s.state)
-}
-
-func (s *TCPSession) checkState(state int32) error {
-	curState := atomic.LoadInt32(&s.state)
-	if curState == state {
-		return nil
-	}
-
-	switch curState {
-	case SessionIdle:
-		return ErrSessionNotStarted
-	case SessionStarted:
-		return ErrSessionStarted
-	case SessionClosed:
-		return ErrSessionClosed
-	default:
-		panic(fmt.Sprintf("gnet.TCPSession: illegal session state %d", curState))
-	}
 }
 
 // LocalAddr 本会本地地址
@@ -197,18 +138,53 @@ func (s *TCPSession) RemoteAddr() net.Addr {
 	return s.conn.RemoteAddr()
 }
 
+// UserData 获取UserData
+func (s *TCPSession) UserData() any {
+	ptr := (*any)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&s.pUserData))))
+	if ptr == nil {
+		return ptr
+	}
+	return *ptr
+}
+
+// SetUserData 更新UserData
+func (s *TCPSession) SetUserData(u any) any {
+	if s.state >= sessionClosing {
+		return s.UserData()
+	}
+
+	ptr := new(any)
+	*ptr = u
+	oldPtr := (*any)(atomic.SwapPointer((*unsafe.Pointer)(unsafe.Pointer(&s.pUserData)), unsafe.Pointer(ptr)))
+
+	if oldPtr == nil {
+		return nil
+	}
+
+	return *oldPtr
+}
+
 // Handler 获取handler
 func (s *TCPSession) Handler() SessionHandler {
-	s.locker.RLocker()
-	defer s.locker.RUnlock()
-	return s.handler
+	ptr := (*SessionHandler)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&s.pHandler))))
+	if ptr == nil {
+		return nil
+	}
+	return *ptr
+}
+
+// setHandler 设置Handler
+func (s *TCPSession) setHandler(h SessionHandler) {
+	ptr := new(SessionHandler)
+	*ptr = h
+	atomic.StorePointer((*unsafe.Pointer)(unsafe.Pointer(&s.pHandler)), unsafe.Pointer(ptr))
 }
 
 // SendPacket 发送数据包
 // p 所提供的消息包不会立即发送，而是被放入发送队列中，等待发送goroutine提取并发送。
 // 如果 p 的大小超过 cfg.GetMaxPacketSize() 或为0，返回 ErrPacketSizeOutOfRange。
 // 如果会话已经关闭，返回 ErrSessionClosed。
-func (s *TCPSession) SendPacket(p *Packet) error {
+func (s *TCPSession) SendPacket(p CustomPacket) error {
 	if p == nil {
 		panic("gnet.TCPSession.SendPacket: p nil")
 	}
@@ -216,11 +192,11 @@ func (s *TCPSession) SendPacket(p *Packet) error {
 	s.locker.Lock()
 	defer s.locker.Unlock()
 
-	if err := s.checkState(SessionStarted); err != nil {
-		return err
+	if s.state != sessionStarted {
+		return getSessionStateErr(s.state)
 	}
 
-	if size := p.Readable(); size == 0 || size > s.cfg.GetMaxPacketSize() {
+	if size := len(p.Data()); size == 0 || size > s.cfg.MaxPacketSize {
 		return ErrPacketSizeOutOfRange
 	}
 
@@ -229,53 +205,49 @@ func (s *TCPSession) SendPacket(p *Packet) error {
 	return nil
 }
 
+// SendData 发送数据
+func (s *TCPSession) SendData(data []byte) error {
+	if len(data) <= 0 {
+		return nil
+	}
+
+	return s.SendPacket(RawPacket(data))
+}
+
 // Close 关闭会话
 // reason 用于提供关闭会话的原因，该 reason 在会话关闭后，可以通过 CloseErr() 获取，
 // 但前提是调用 Close(reason) 之前，会话并未关闭.
 func (s *TCPSession) Close(reason error) error {
-	return s.close(true, reason)
+	s.locker.Lock()
+	defer s.locker.Unlock()
+
+	if s.state != sessionStarted {
+		return getSessionStateErr(s.state)
+	}
+
+	s.closeErr = reason
+	_ = s.conn.Close()
+	s.pendingPacketCond.Signal()
+	s.state = sessionClosing
+	return nil
 }
 
-// close 关闭会话的实际实现
-func (s *TCPSession) close(active bool, err error) error {
-	if active {
-		if atomic.LoadInt32(&s.state) == SessionIdle {
-			return ErrSessionNotStarted
-		}
-	}
-
-	ok := atomic.CompareAndSwapInt32(&s.state, SessionStarted, SessionClosed)
-	if ok {
-		s.setCLoseErr(err)
-		_ = s.conn.Close()
-		s.pendingPacketCond.Signal()
-	}
-
-	if active {
-		if !ok {
-			return ErrSessionClosed
-		}
-		return nil
-	} else {
-		s.setCLoseErr(err)
-		ct := atomic.AddInt32(&s.closeTag, 1)
-		if ct == 2 {
-			s.handler.OnSessionClosed(s, s.getCloseErr())
-			s.locker.Lock()
-			s.handler = nil
-			s.locker.Unlock()
-			s.pendingPacketQue.Clear()
-		}
-		return nil
+// loopClose 内部循环关闭
+func (s *TCPSession) loopClose(err error) {
+	s.Close(err)
+	if atomic.AddInt32(&s.closeFlag, 1) >= 2 {
+		s.state = sessionClosed
+		(*s.pHandler).OnSessionClosed(s, s.closeErr)
+		s.clear()
 	}
 }
 
-func (s *TCPSession) setCLoseErr(err error) {
-	atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(&s.closeErr)), unsafe.Pointer(nil), unsafe.Pointer(&err))
-}
-
-func (s *TCPSession) getCloseErr() error {
-	return *(*error)(atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&s.closeErr))))
+func (s *TCPSession) clear() {
+	s.pendingPacketQue.Clear()
+	s.sendingPacketQue.Clear()
+	s.SetUserData(nil)
+	s.setHandler(nil)
+	s.cfg = nil
 }
 
 // sendLoop 发送循环
@@ -283,36 +255,39 @@ func (s *TCPSession) getCloseErr() error {
 func (s *TCPSession) sendLoop() {
 	var err error
 
-	s.sendBuf = bytes.NewFixedBuffer(s.cfg.GetSendBufferSize())
+	s.sendBuf = bytes.NewFixedBuffer(s.cfg.SendBufferSize)
 
-	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
-		pq := s.swapPendingPacketQue()
-		if err = s.sendPacketQueue(pq); err != nil {
+	for {
+		if s.state != sessionStarted {
+			err = getSessionStateErr(s.state)
+			break
+		}
+
+		s.swapPendingPacketQue()
+		if err = s.sendPacketQueue(); err != nil {
 			break
 		}
 	}
 
 	// 尽量保证缓存数据能发送出去
 	_ = s.sendBuffered(true)
-	s.sendBuf = nil
 
-	// 发送出错，关闭会话
-	_ = s.close(false, err)
+	s.sendBuf = nil
+	s.loopClose(err)
 }
 
 // swapPendingPacketQue 置换待发送消息队列
-func (s *TCPSession) swapPendingPacketQue() *PacketQueue {
+func (s *TCPSession) swapPendingPacketQue() {
 	s.locker.Lock()
 	defer s.locker.Unlock()
 	for {
-		if s.pendingPacketQue.Len() > 0 {
-			pq := s.pendingPacketQue
-			s.pendingPacketQue = NewPacketQueue()
-			return pq
+		if s.pendingPacketQue.len > 0 {
+			s.pendingPacketQue, s.sendingPacketQue = s.sendingPacketQue, s.pendingPacketQue
+			return
 		}
 
-		if s.checkState(SessionStarted) != nil {
-			return nil
+		if s.state != sessionStarted {
+			return
 		}
 
 		s.pendingPacketCond.Wait()
@@ -320,16 +295,17 @@ func (s *TCPSession) swapPendingPacketQue() *PacketQueue {
 }
 
 // sendPacketQueue 发送消息包队列
-func (s *TCPSession) sendPacketQueue(pq *PacketQueue) (err error) {
-	if pq == nil {
+func (s *TCPSession) sendPacketQueue() (err error) {
+	if s.sendingPacketQue.len <= 0 {
 		return nil
 	}
 
-	for p := pq.Pop(); p != nil; p = pq.Pop() {
+	for p := s.sendingPacketQue.Pop(); p != nil; p = s.sendingPacketQue.Pop() {
 		if err = s.writePacket(p); err != nil {
 			return
 		}
-		PutPacket(p)
+
+		s.putPacket(p)
 	}
 
 	if err = s.sendBuffered(true); err != nil {
@@ -340,8 +316,13 @@ func (s *TCPSession) sendPacketQueue(pq *PacketQueue) (err error) {
 }
 
 // writePacket 将数据包写入发送缓冲区
-func (s *TCPSession) writePacket(p *Packet) error {
+func (s *TCPSession) writePacket(p CustomPacket) error {
 	var err error
+
+	data := p.Data()
+
+	// 读取包大小
+	size := len(data)
 
 	// 写包大小
 	for s.sendBuf.Writable() < tcpPacketSizeLen {
@@ -349,7 +330,7 @@ func (s *TCPSession) writePacket(p *Packet) error {
 			return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet size: send data buffered")
 		}
 	}
-	err = s.sendBuf.WriteUint32(uint32(p.Readable()))
+	err = s.sendBuf.WriteUint32(uint32(size))
 	if err != nil {
 		// 将包大小写入缓存失败
 		return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet size to buffer")
@@ -358,21 +339,21 @@ func (s *TCPSession) writePacket(p *Packet) error {
 	// 写包体
 	var n int
 	var w int
-	data := p.UnreadData()
-	for n < len(data) {
-		w, err = s.sendBuf.Write(data[n:])
+	for w < size {
+		n, err = s.sendBuf.Write(data[w:])
 		if err != nil && err != buffer.ErrBufferFull {
 			// 将包数据写入缓存失败
 			return pkg_errors.WithMessage(err, "gnet.TCPSession: write packet data to buffer")
 		}
-		n += w
 
+		w += n
 		if s.sendBuf.Writable() < tcpPacketSizeLen {
 			if err = s.sendBuffered(false); err != nil {
 				return pkg_errors.WithMessage(err, "gnet.TCPSession: send data buffered")
 			}
 		}
 	}
+
 	return err
 }
 
@@ -385,7 +366,7 @@ func (s *TCPSession) sendBuffered(all bool) (err error) {
 
 	for {
 		// set write timeout
-		if sendTimeout := s.cfg.GetSendTimeoutDuration(); sendTimeout > 0 {
+		if sendTimeout := s.cfg.SendTimeoutDuration(); sendTimeout > 0 {
 			s.conn.SetWriteDeadline(time.Now().Add(sendTimeout))
 		} else {
 			s.conn.SetWriteDeadline(time.Time{})
@@ -418,23 +399,28 @@ func (s *TCPSession) receiveLoop() {
 	var err error
 
 	// 申请接收缓冲区
-	s.receiveBuf = bytes.NewFixedBuffer(s.cfg.GetReceiveBufferSize())
+	s.receiveBuf = bytes.NewFixedBuffer(s.cfg.ReceiveBufferSize)
 
-	for err = s.checkState(SessionStarted); err == nil; err = s.checkState(SessionStarted) {
+	for {
+		if s.state != sessionStarted {
+			err = getSessionStateErr(s.state)
+			break
+		}
+
 		if err = s.receivePacket(); err != nil {
 			break
 		}
 	}
 
 	s.receiveBuf = nil
-	_ = s.close(false, err)
+	s.loopClose(err)
 }
 
 // receivePacket 接收单个消息包
 // 事先将数据读入接收缓冲区中，再通过接收缓冲区中的数据生成消息包，并放入接收队列.
 // closed 用于返回会话是否关闭，err 用于返回接收过程中产生的错误。
 func (s *TCPSession) receivePacket() (err error) {
-	var packetSize int
+	var size int
 
 	for s.receiveBuf.Readable() < tcpPacketSizeLen {
 		if err = s.receive2Buffer(); err != nil {
@@ -448,25 +434,26 @@ func (s *TCPSession) receivePacket() (err error) {
 		err = pkg_errors.WithMessage(e, "gnet.TCPSession: read packet size from buffer")
 		return
 	} else {
-		packetSize = int(u32)
-		if packetSize == 0 || packetSize > s.cfg.GetMaxPacketSize() {
+		size = int(u32)
+		if size == 0 || size > s.cfg.MaxPacketSize {
 			// 包大小超出范围
-			err = fmt.Errorf("gnet.TCPSession: receive packet size %d out of range", packetSize)
+			err = fmt.Errorf("gnet.TCPSession: receive packet size %d out of range", size)
 			return
 		}
 	}
 
-	packet := GetPacket(packetSize)
-	unread := packetSize
-	n := int64(0)
+	packet := s.getPacket(size)
+	data := packet.Data()
+	r := 0
+	n := 0
 	for {
-		n, err = packet.ReadFromN(s.receiveBuf, unread)
+		n, err = s.receiveBuf.Read(data[r:])
 		if err != nil && err != io.EOF {
 			err = pkg_errors.WithMessage(err, "gnet.TCPSession: read data from buffer")
 			return
 		}
 
-		if unread -= int(n); unread <= 0 {
+		if r += n; r >= size {
 			break
 		}
 
@@ -476,7 +463,7 @@ func (s *TCPSession) receivePacket() (err error) {
 		}
 	}
 
-	err = s.handler.OnSessionPacket(s, packet)
+	err = (*s.pHandler).OnSessionPacket(s, packet)
 	return
 }
 
@@ -484,7 +471,7 @@ func (s *TCPSession) receivePacket() (err error) {
 // err 用于返回读取过程中出现的错误
 func (s *TCPSession) receive2Buffer() (err error) {
 	// set read timeout
-	if receiveTimeout := s.cfg.GetReceiveTimeoutDuration(); receiveTimeout > 0 {
+	if receiveTimeout := s.cfg.ReceiveTimeoutDuration(); receiveTimeout > 0 {
 		s.conn.SetReadDeadline(time.Now().Add(receiveTimeout))
 	} else {
 		s.conn.SetReadDeadline(time.Time{})
@@ -495,15 +482,26 @@ func (s *TCPSession) receive2Buffer() (err error) {
 	return
 }
 
-// ConnectTCP 连接TCP服务并创建TCPSession
+func (s *TCPSession) getPacket(size int) CustomPacket {
+	p := (*s.pHandler).GetPacket(size)
+	if p == nil {
+		p = RawPacket(make([]byte, size))
+	}
+	return p
+}
+
+func (s *TCPSession) putPacket(p CustomPacket) {
+	(*s.pHandler).PutPacket(p)
+}
+
+// ConnectTCP 连接TCP服务
 // network: tcp, tcp4, tcp6
 // addr: ip:port
-func ConnectTCP(network string, addr string) (*TCPSession, error) {
-	conn, err := net.Dial(network, addr)
+func ConnectTCP(network string, addr string) (*net.TCPConn, error) {
+	raddr, err := net.ResolveTCPAddr(network, addr)
 	if err != nil {
 		return nil, err
 	}
 
-	tcpConn := conn.(*net.TCPConn)
-	return NewTCPSession(tcpConn), nil
+	return net.DialTCP(network, nil, raddr)
 }

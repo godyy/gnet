@@ -29,7 +29,7 @@ type Message struct {
 }
 
 func EncodeMessage(msg *Message) (*gnet.Packet, error) {
-	pp := gnet.GetPacket(1 + 4 + msg.Protoc.Len())
+	pp := gnet.NewPacketWithCap(1 + 4 + msg.Protoc.Len())
 	if err := pp.WriteInt8(msg.MsgType); err != nil {
 		return nil, errors.WithMessage(err, "write msg-type")
 	}

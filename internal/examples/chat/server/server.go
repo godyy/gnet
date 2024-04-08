@@ -12,7 +12,7 @@ import (
 )
 
 type Server struct {
-	cfg       gnet.TcpSessionCfgReadonly
+	cfg       *gnet.TcpSessionCfg
 	listener  *gnet.TCPListener  // 网络监听器
 	users     map[string]*user   // 用户
 	requestCh chan serverRequest // 请求channel
@@ -22,11 +22,7 @@ func NewServer() *Server {
 	return &Server{}
 }
 
-func (s *Server) getCfg() gnet.TcpSessionCfgReadonly {
-	return s.cfg
-}
-
-func (s *Server) Start(addr string, cfg gnet.TcpSessionCfgReadonly) error {
+func (s *Server) Start(addr string, cfg *gnet.TcpSessionCfg) error {
 	s.cfg = cfg
 
 	var err error
@@ -39,11 +35,10 @@ func (s *Server) Start(addr string, cfg gnet.TcpSessionCfgReadonly) error {
 	s.requestCh = make(chan serverRequest, 100)
 
 	go func() {
-		if err := s.listener.Start(func(conn net.Conn) {
-			tcpConn := conn.(*net.TCPConn)
-			session := gnet.NewTCPSession(tcpConn)
-			user := newUser(s, session)
-			if err := user.start(); err != nil {
+		if err := s.listener.Start(func(conn *net.TCPConn) {
+			user := newUser(s)
+			session := gnet.NewTCPSession(conn, cfg)
+			if err := user.start(session); err != nil {
 				log.Printf("new user star: %v", err)
 				user.stop()
 			}

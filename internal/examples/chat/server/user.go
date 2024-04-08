@@ -24,17 +24,17 @@ type user struct {
 	name    string           // 用户名
 }
 
-func newUser(server *Server, session *gnet.TCPSession) *user {
+func newUser(server *Server) *user {
 	u := &user{
-		server:  server,
-		session: session,
+		server: server,
 	}
 	return u
 }
 
-func (u *user) start() error {
+func (u *user) start(session *gnet.TCPSession) error {
 	if atomic.CompareAndSwapInt32(&u.state, 0, userStarted) {
-		if err := u.session.Start(u.server.getCfg(), u); err != nil {
+		u.session = session
+		if err := u.session.Start(u); err != nil {
 			return err
 		}
 		return nil
@@ -166,10 +166,14 @@ func (u *user) logf(f string, v ...interface{}) {
 	log.Printf(fmt.Sprintf("user \"%s\": %s", u.name, f), v...)
 }
 
-func (u *user) OnSessionPacket(session gnet.Session, packet *gnet.Packet) error {
-	defer gnet.PutPacket(packet)
+func (u *user) GetPacket(size int) gnet.CustomPacket {
+	return gnet.NewPacketWithSize(size)
+}
 
-	msg, err := chat.DecodeMessage(packet)
+func (u *user) PutPacket(gnet.CustomPacket) {}
+
+func (u *user) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) error {
+	msg, err := chat.DecodeMessage(gnet.NewPacket(packet.Data()))
 	if err != nil {
 		return errors.WithMessage(err, "decode message")
 	}

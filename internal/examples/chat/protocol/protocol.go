@@ -2,9 +2,10 @@ package protocol
 
 import (
 	"fmt"
+	"reflect"
+
 	"github.com/godyy/gnet"
 	"github.com/pkg/errors"
-	"reflect"
 )
 
 type Protocol interface {

@@ -120,13 +120,13 @@ func (c *client) loop() error {
 				continue
 			}
 
-			session, err := gnet.ConnectTCP("tcp", *serverAddr)
+			conn, err := gnet.ConnectTCP("tcp", *serverAddr)
 			if err != nil {
 				return errors.WithMessage(err, "无法连接服务器")
 			}
 
 			c.client = client2.NewClient(c)
-			if err := c.client.Start(session, userName, cfg); err != nil {
+			if err := c.client.Start(conn, userName, cfg); err != nil {
 				c.print(fmt.Sprintf("登陆服务器失败: %v", err))
 				continue
 			}

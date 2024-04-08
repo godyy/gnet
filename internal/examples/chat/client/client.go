@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,7 +41,7 @@ func NewClient(handler Handler) *Client {
 	}
 }
 
-func (c *Client) Start(session *gnet.TCPSession, userName string, opt gnet.TcpSessionCfgReadonly) error {
+func (c *Client) Start(conn *net.TCPConn, userName string, opt *gnet.TcpSessionCfg) error {
 	if userName == "" {
 		return errors.New("user name empty")
 	}
@@ -48,7 +49,8 @@ func (c *Client) Start(session *gnet.TCPSession, userName string, opt gnet.TcpSe
 		return errors.New("length of user name exceed limit")
 	}
 
-	if err := session.Start(opt, c); err != nil {
+	session := gnet.NewTCPSession(conn, opt)
+	if err := session.Start(c); err != nil {
 		return errors.WithMessage(err, "session start")
 	}
 	c.session = session
@@ -188,10 +190,14 @@ func (c *Client) sendMessage(msg *chat.Message) error {
 	return err
 }
 
-func (c *Client) OnSessionPacket(session gnet.Session, packet *gnet.Packet) error {
-	defer gnet.PutPacket(packet)
+func (c *Client) GetPacket(size int) gnet.CustomPacket {
+	return gnet.NewPacketWithSize(size)
+}
 
-	msg, err := chat.DecodeMessage(packet)
+func (c *Client) PutPacket(gnet.CustomPacket) {}
+
+func (c *Client) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) error {
+	msg, err := chat.DecodeMessage(gnet.NewPacket(packet.Data()))
 	if err != nil {
 		// todo
 		return errors.WithMessage(err, "decode message")
