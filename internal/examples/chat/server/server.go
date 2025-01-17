@@ -6,14 +6,12 @@ import (
 	"net"
 	"time"
 
-	"github.com/godyy/gnet"
 	"github.com/godyy/gnet/internal/examples/chat"
 	"github.com/godyy/gnet/internal/examples/chat/protocol"
 )
 
 type Server struct {
-	cfg       *gnet.TcpSessionCfg
-	listener  *gnet.TCPListener  // 网络监听器
+	listener  net.Listener       // 网络监听器
 	users     map[string]*user   // 用户
 	requestCh chan serverRequest // 请求channel
 }
@@ -22,11 +20,9 @@ func NewServer() *Server {
 	return &Server{}
 }
 
-func (s *Server) Start(addr string, cfg *gnet.TcpSessionCfg) error {
-	s.cfg = cfg
-
+func (s *Server) Start(addr string) error {
 	var err error
-	s.listener, err = gnet.ListenTCP("tcp", addr)
+	s.listener, err = net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -35,15 +31,18 @@ func (s *Server) Start(addr string, cfg *gnet.TcpSessionCfg) error {
 	s.requestCh = make(chan serverRequest, 100)
 
 	go func() {
-		if err := s.listener.Start(func(conn *net.TCPConn) {
+		for {
+			conn, err := s.listener.Accept()
+			if err != nil {
+				log.Printf("server stop listen: %v", err)
+				return
+			}
+
 			user := newUser(s)
-			session := gnet.NewTCPSession(conn, cfg)
-			if err := user.start(session); err != nil {
+			if err := user.start(conn); err != nil {
 				log.Printf("new user star: %v", err)
 				user.stop()
 			}
-		}); err != nil {
-			log.Printf("server stop listen: %v", err)
 		}
 	}()
 

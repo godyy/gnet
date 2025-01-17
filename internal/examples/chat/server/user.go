@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"log"
+	"net"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -18,23 +19,29 @@ const (
 )
 
 type user struct {
-	server  *Server          // 所属服务
-	session *gnet.TCPSession // 网络会话
-	state   int32            // 状态
-	name    string           // 用户名
+	state          int32            // 状态
+	chStopped      chan struct{}    //
+	server         *Server          // 所属服务
+	session        *gnet.Session    // 网络会话
+	name           string           // 用户名
+	pendingPackets chan gnet.Packet // 待发送数据包
 }
 
 func newUser(server *Server) *user {
 	u := &user{
-		server: server,
+		chStopped:      make(chan struct{}),
+		server:         server,
+		pendingPackets: make(chan gnet.Packet, 10),
 	}
 	return u
 }
 
-func (u *user) start(session *gnet.TCPSession) error {
+var packetReaderWriter = &chat.PacketReaderWriter{}
+
+func (u *user) start(conn net.Conn) error {
 	if atomic.CompareAndSwapInt32(&u.state, 0, userStarted) {
-		u.session = session
-		if err := u.session.Start(u); err != nil {
+		u.session = gnet.NewSession(conn, packetReaderWriter, packetReaderWriter, u)
+		if err := u.session.Start(); err != nil {
 			return err
 		}
 		return nil
@@ -49,7 +56,8 @@ func (u *user) stop() {
 			u.server.pushRequest(newLogoutRequest(u.name))
 		}
 
-		_ = u.session.Close(errors.New(""))
+		_ = u.session.Close()
+		close(u.chStopped)
 		u.server = nil
 		u.session = nil
 	}
@@ -159,21 +167,33 @@ func (u *user) sendMessage(msg *chat.Message) error {
 	if err != nil {
 		return errors.WithMessage(err, "encode message")
 	}
-	return u.session.SendPacket(packet)
+	select {
+	case u.pendingPackets <- packet:
+		return nil
+	case <-u.chStopped:
+		return errors.New("user stopped")
+	}
 }
 
 func (u *user) logf(f string, v ...interface{}) {
 	log.Printf(fmt.Sprintf("user \"%s\": %s", u.name, f), v...)
 }
 
-func (u *user) GetPacket(size int) gnet.CustomPacket {
-	return gnet.NewPacketWithSize(size)
+func (u *user) SessionPendingPacket() (gnet.Packet, bool, error) {
+	var p gnet.Packet
+	select {
+	case p = <-u.pendingPackets:
+		if p == nil {
+			return nil, false, errors.New("user stopped")
+		}
+		return p, len(u.pendingPackets) > 0, nil
+	case <-u.chStopped:
+		return nil, false, errors.New("user stopped")
+	}
 }
 
-func (u *user) PutPacket(gnet.CustomPacket) {}
-
-func (u *user) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) error {
-	msg, err := chat.DecodeMessage(gnet.NewPacket(packet.Data()))
+func (u *user) SessionOnPacket(session *gnet.Session, packet gnet.Packet) error {
+	msg, err := chat.DecodeMessage(packet.(*gnet.Buffer))
 	if err != nil {
 		return errors.WithMessage(err, "decode message")
 	}
@@ -185,7 +205,7 @@ func (u *user) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) e
 	return nil
 }
 
-func (u *user) OnSessionClosed(session gnet.Session, err error) {
+func (u *user) SessionOnClosed(session *gnet.Session, err error) {
 	u.logf("close: %v", err)
 	u.stop()
 }
