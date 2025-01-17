@@ -10,8 +10,8 @@ import (
 
 type Protocol interface {
 	Len() int
-	Encode(*gnet.Packet) error
-	Decode(*gnet.Packet) error
+	Encode(*gnet.Buffer) error
+	Decode(*gnet.Buffer) error
 }
 
 var protocolTypes = map[string]reflect.Type{}
@@ -37,7 +37,7 @@ func (l *LoginReq) Len() int {
 	return 2 + len(l.UserName)
 }
 
-func (l *LoginReq) Encode(p *gnet.Packet) (err error) {
+func (l *LoginReq) Encode(p *gnet.Buffer) (err error) {
 	err = p.WriteString(l.UserName)
 	if err != nil {
 		return errors.WithMessage(err, "encode UserName")
@@ -45,7 +45,7 @@ func (l *LoginReq) Encode(p *gnet.Packet) (err error) {
 	return
 }
 
-func (l *LoginReq) Decode(p *gnet.Packet) (err error) {
+func (l *LoginReq) Decode(p *gnet.Buffer) (err error) {
 	l.UserName, err = p.ReadString()
 	if err != nil {
 		return errors.WithMessage(err, "decode UserName")
@@ -61,7 +61,7 @@ func (l *LoginRsp) Len() int {
 	return 2 + len(l.Error)
 }
 
-func (l *LoginRsp) Encode(p *gnet.Packet) (err error) {
+func (l *LoginRsp) Encode(p *gnet.Buffer) (err error) {
 	err = p.WriteString(l.Error)
 	if err != nil {
 		return errors.WithMessage(err, "encode Error")
@@ -69,7 +69,7 @@ func (l *LoginRsp) Encode(p *gnet.Packet) (err error) {
 	return
 }
 
-func (l *LoginRsp) Decode(p *gnet.Packet) (err error) {
+func (l *LoginRsp) Decode(p *gnet.Buffer) (err error) {
 	l.Error, err = p.ReadString()
 	if err != nil {
 		return errors.WithMessage(err, "decode Error")
@@ -85,7 +85,7 @@ func (s *SendMessageReq) Len() int {
 	return 2 + len(s.Message)
 }
 
-func (s *SendMessageReq) Encode(p *gnet.Packet) (err error) {
+func (s *SendMessageReq) Encode(p *gnet.Buffer) (err error) {
 	err = p.WriteString(s.Message)
 	if err != nil {
 		return errors.WithMessage(err, "encode Message")
@@ -93,7 +93,7 @@ func (s *SendMessageReq) Encode(p *gnet.Packet) (err error) {
 	return
 }
 
-func (s *SendMessageReq) Decode(p *gnet.Packet) (err error) {
+func (s *SendMessageReq) Decode(p *gnet.Buffer) (err error) {
 	s.Message, err = p.ReadString()
 	if err != nil {
 		return errors.WithMessage(err, "decode Message")
@@ -109,7 +109,7 @@ func (s *SendMessageRsp) Len() int {
 	return 2 + len(s.Error)
 }
 
-func (s *SendMessageRsp) Encode(p *gnet.Packet) (err error) {
+func (s *SendMessageRsp) Encode(p *gnet.Buffer) (err error) {
 	err = p.WriteString(s.Error)
 	if err != nil {
 		return errors.WithMessage(err, "encode Error")
@@ -117,7 +117,7 @@ func (s *SendMessageRsp) Encode(p *gnet.Packet) (err error) {
 	return
 }
 
-func (s *SendMessageRsp) Decode(p *gnet.Packet) (err error) {
+func (s *SendMessageRsp) Decode(p *gnet.Buffer) (err error) {
 	s.Error, err = p.ReadString()
 	if err != nil {
 		return errors.WithMessage(err, "decode Error")
@@ -142,7 +142,7 @@ func (r *MessageNotify) Len() int {
 	return 1 + 2 + len(r.UserName) + 2 + len(r.Message) + 8
 }
 
-func (r *MessageNotify) Encode(p *gnet.Packet) (err error) {
+func (r *MessageNotify) Encode(p *gnet.Buffer) (err error) {
 	if err = p.WriteInt8(r.Type); err != nil {
 		return errors.WithMessage(err, "encode Type")
 	}
@@ -162,7 +162,7 @@ func (r *MessageNotify) Encode(p *gnet.Packet) (err error) {
 	return
 }
 
-func (r *MessageNotify) Decode(p *gnet.Packet) (err error) {
+func (r *MessageNotify) Decode(p *gnet.Buffer) (err error) {
 	if r.Type, err = p.ReadInt8(); err != nil {
 		return errors.WithMessage(err, "decode Type")
 	}
@@ -182,7 +182,7 @@ func (r *MessageNotify) Decode(p *gnet.Packet) (err error) {
 	return
 }
 
-func Encode(p Protocol, pp *gnet.Packet) error {
+func Encode(p Protocol, pp *gnet.Buffer) error {
 	protocolType := reflect.TypeOf(p).Elem().Name()
 	if _, ok := protocolTypes[protocolType]; !ok {
 		return fmt.Errorf("Protocol Type %s wrong", protocolType)
@@ -199,7 +199,7 @@ func Encode(p Protocol, pp *gnet.Packet) error {
 	return nil
 }
 
-func Decode(pp *gnet.Packet) (Protocol, error) {
+func Decode(pp *gnet.Buffer) (Protocol, error) {
 	protocolType, err := pp.ReadString()
 	if err != nil {
 		return nil, errors.WithMessage(err, "decode Protocol Type")
@@ -223,14 +223,14 @@ func (h *HeartbeatReq) Len() int {
 	return 1
 }
 
-func (h *HeartbeatReq) Encode(packet *gnet.Packet) error {
+func (h *HeartbeatReq) Encode(packet *gnet.Buffer) error {
 	if err := packet.WriteByte(0); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (h *HeartbeatReq) Decode(packet *gnet.Packet) error {
+func (h *HeartbeatReq) Decode(packet *gnet.Buffer) error {
 	_, err := packet.ReadByte()
 	return err
 }
@@ -241,14 +241,14 @@ func (h *HeartbeatRsp) Len() int {
 	return 1
 }
 
-func (h *HeartbeatRsp) Encode(packet *gnet.Packet) error {
+func (h *HeartbeatRsp) Encode(packet *gnet.Buffer) error {
 	if err := packet.WriteByte(0); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (h *HeartbeatRsp) Decode(packet *gnet.Packet) error {
+func (h *HeartbeatRsp) Decode(packet *gnet.Buffer) error {
 	_, err := packet.ReadByte()
 	return err
 }

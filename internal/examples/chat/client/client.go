@@ -23,8 +23,10 @@ type Handler interface {
 
 type Client struct {
 	mtx                 sync.RWMutex
+	chStopped           chan struct{}
+	pendingPackets      chan gnet.Packet
 	userName            string
-	session             *gnet.TCPSession
+	session             *gnet.Session
 	msgSeri             uint32
 	requests            map[uint32]*Request
 	requestHeap         *requestHeap
@@ -35,13 +37,17 @@ type Client struct {
 
 func NewClient(handler Handler) *Client {
 	return &Client{
-		requests:    map[uint32]*Request{},
-		requestHeap: newRequestHeap(10),
-		handler:     handler,
+		chStopped:      make(chan struct{}),
+		pendingPackets: make(chan gnet.Packet, 10),
+		requests:       map[uint32]*Request{},
+		requestHeap:    newRequestHeap(10),
+		handler:        handler,
 	}
 }
 
-func (c *Client) Start(conn *net.TCPConn, userName string, opt *gnet.TcpSessionCfg) error {
+var packetReaderWriter = &chat.PacketReaderWriter{}
+
+func (c *Client) Start(conn net.Conn, userName string) error {
 	if userName == "" {
 		return errors.New("user name empty")
 	}
@@ -49,11 +55,10 @@ func (c *Client) Start(conn *net.TCPConn, userName string, opt *gnet.TcpSessionC
 		return errors.New("length of user name exceed limit")
 	}
 
-	session := gnet.NewTCPSession(conn, opt)
-	if err := session.Start(c); err != nil {
+	c.session = gnet.NewSession(conn, packetReaderWriter, packetReaderWriter, c)
+	if err := c.session.Start(); err != nil {
 		return errors.WithMessage(err, "session start")
 	}
-	c.session = session
 
 	req, err := c.SendRequest(&protocol.LoginReq{UserName: userName})
 	if err != nil {
@@ -144,7 +149,7 @@ func (c *Client) startHeartbeat() {
 		c.heartbeatTimer = nil
 	}
 
-	c.heartbeatTimer = time.AfterFunc(chat.ReceiveTimeout/2, c.onHeartbeat)
+	c.heartbeatTimer = time.AfterFunc(chat.ReadTimeout/2, c.onHeartbeat)
 }
 
 func (c *Client) onHeartbeat() {
@@ -185,19 +190,31 @@ func (c *Client) sendMessage(msg *chat.Message) error {
 	if err != nil {
 		return errors.WithMessage(err, "encode message")
 	}
-	err = c.session.SendPacket(packet)
-	c.startHeartbeat()
-	return err
+
+	select {
+	case c.pendingPackets <- packet:
+		c.startHeartbeat()
+		return nil
+	case <-c.chStopped:
+		return errors.New("client closed")
+	}
 }
 
-func (c *Client) GetPacket(size int) gnet.CustomPacket {
-	return gnet.NewPacketWithSize(size)
+func (c *Client) SessionPendingPacket() (gnet.Packet, bool, error) {
+	var p gnet.Packet
+	select {
+	case p = <-c.pendingPackets:
+		if p == nil {
+			return nil, false, errors.New("user stopped")
+		}
+		return p, len(c.pendingPackets) > 0, nil
+	case <-c.chStopped:
+		return nil, false, errors.New("user stopped")
+	}
 }
 
-func (c *Client) PutPacket(gnet.CustomPacket) {}
-
-func (c *Client) OnSessionPacket(session gnet.Session, packet gnet.CustomPacket) error {
-	msg, err := chat.DecodeMessage(gnet.NewPacket(packet.Data()))
+func (c *Client) SessionOnPacket(session *gnet.Session, packet gnet.Packet) error {
+	msg, err := chat.DecodeMessage(packet.(*gnet.Buffer))
 	if err != nil {
 		// todo
 		return errors.WithMessage(err, "decode message")
@@ -226,6 +243,6 @@ func (c *Client) handleResponse(msg *chat.Message) {
 	}
 }
 
-func (c *Client) OnSessionClosed(session gnet.Session, err error) {
+func (c *Client) SessionOnClosed(session *gnet.Session, err error) {
 	c.handler.OnClose(err)
 }

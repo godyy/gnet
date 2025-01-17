@@ -4,11 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/chzyer/readline"
-	"github.com/godyy/gnet"
 	"github.com/godyy/gnet/internal/examples/chat"
 	client2 "github.com/godyy/gnet/internal/examples/chat/client"
 	"github.com/godyy/gnet/internal/examples/chat/protocol"
@@ -19,15 +19,10 @@ var (
 	ErrTerminated = errors.New("terminated")
 
 	serverAddr = flag.String("server-addr", "localhost:8822", "specify server address")
-
-	cfg = gnet.NewTcpSessionCfg()
 )
 
 func main() {
 	flag.Parse()
-
-	cfg.ReceiveTimeout = chat.ReceiveTimeout
-	cfg.SendTimeout = chat.SendTimeout
 
 	client := newClient()
 	if err := client.loop(); err != nil {
@@ -110,7 +105,7 @@ func (c *client) loop() error {
 
 			userName, err := c.readOneLine()
 			if err != nil {
-				if err == readline.ErrInterrupt {
+				if errors.Is(err, readline.ErrInterrupt) {
 					return ErrTerminated
 				}
 				return errors.WithMessage(err, "无法读取用户名")
@@ -120,13 +115,13 @@ func (c *client) loop() error {
 				continue
 			}
 
-			conn, err := gnet.ConnectTCP("tcp", *serverAddr)
+			conn, err := net.Dial("tcp", *serverAddr)
 			if err != nil {
 				return errors.WithMessage(err, "无法连接服务器")
 			}
 
 			c.client = client2.NewClient(c)
-			if err := c.client.Start(conn, userName, cfg); err != nil {
+			if err := c.client.Start(conn, userName); err != nil {
 				c.print(fmt.Sprintf("登陆服务器失败: %v", err))
 				continue
 			}
