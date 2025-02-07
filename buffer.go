@@ -9,10 +9,6 @@ type Buffer struct {
 	bytes.Buffer
 }
 
-func (p *Buffer) Data() []byte {
-	return p.UnreadData()
-}
-
 func (p *Buffer) ReadInt16() (int16, error) {
 	return p.ReadBigInt16()
 }
