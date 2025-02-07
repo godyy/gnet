@@ -65,7 +65,7 @@ func (s *sessionHandler) SessionOnClosed(session *gnet.Session, err error) {
 	log.Println("session closed: ", err)
 }
 
-func (s *sessionHandler) SendPacket(p gnet.Packet) error {
+func (s *sessionHandler) WritePacket(p gnet.Packet) error {
 	select {
 	case s.pendingPackets <- p:
 		return nil
@@ -117,7 +117,7 @@ func main() {
 				p := define.GetBuffer()
 				p.Grow(size, true)
 				binary.BigEndian.PutUint64(p.Data(), uint64(time.Now().UnixNano()))
-				if err := handler.SendPacket(p); err != nil {
+				if err := handler.WritePacket(p); err != nil {
 					break
 				}
 				//time.Sleep(1 * time.Millisecond)
