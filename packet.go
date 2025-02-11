@@ -9,6 +9,11 @@ type Packet interface {
 	Data() []byte
 }
 
+// RawPacket 原始数据包, 其本身仅为 []byte 的别名.
+type RawPacket []byte
+
+func (rp RawPacket) Data() []byte { return rp }
+
 // PacketReader 接收数据包
 type PacketReader interface {
 	ReadPacket(r ConnReader) (Packet, error)
