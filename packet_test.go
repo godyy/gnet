@@ -22,7 +22,7 @@ type testTCPPacketReaderWriter struct {
 	timeout time.Duration
 }
 
-func (t testTCPPacketReaderWriter) SessionReadPacket(r ConnReader) (Packet, error) {
+func (t testTCPPacketReaderWriter) ReadPacket(r ConnReader) (Packet, error) {
 	_ = r.SetReadDeadline(time.Now().Add(t.timeout))
 
 	var head [2]byte
@@ -141,7 +141,7 @@ type testUDPPacketReaderWriter struct {
 	maxPacketSize int
 }
 
-func (t testUDPPacketReaderWriter) SessionReadPacket(r ConnReader) (Packet, error) {
+func (t testUDPPacketReaderWriter) ReadPacket(r ConnReader) (Packet, error) {
 	_ = r.SetReadDeadline(time.Now().Add(t.timeout))
 
 	data := make([]byte, t.maxPacketSize)

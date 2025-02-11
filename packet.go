@@ -11,12 +11,12 @@ type Packet interface {
 
 // PacketReader 接收数据包
 type PacketReader interface {
-	SessionReadPacket(r ConnReader) (Packet, error)
+	ReadPacket(r ConnReader) (Packet, error)
 }
 
 // ReadPacket 利用 r 从 conn 指定的连接中接收数据包
 func ReadPacket(conn net.Conn, r PacketReader) (Packet, error) {
-	return r.SessionReadPacket(conn)
+	return r.ReadPacket(conn)
 }
 
 // PacketWriter 发送数据包
